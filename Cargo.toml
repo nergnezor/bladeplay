@@ -1,0 +1,15 @@
+[package]
+name = "interact"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+blade-engine = { git = "https://github.com/nergnezor/blade", branch = "wayland-niri-fix" }
+blade-helpers = { git = "https://github.com/nergnezor/blade", branch = "wayland-niri-fix" }
+blade-render = { git = "https://github.com/nergnezor/blade", branch = "wayland-niri-fix" }
+egui = "0.34"
+egui-winit = { version = "0.34", default-features = false, features = ["links"] }
+glam = { version = "0.30", features = ["mint"] }
+log = "0.4"
+env_logger = "0.11"
+winit = "0.30"
