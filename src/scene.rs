@@ -102,6 +102,50 @@ impl Scene {
         (engine, scene)
     }
 
+    pub fn write_env_hdr(&self) {
+        use std::io::Write as _;
+        const W: u32 = 512;
+        const H: u32 = 256;
+        let mut pixels = vec![[0f32; 3]; (W * H) as usize];
+
+        // Twilight sky: deep blue zenith, warm horizon
+        for y in 0..H {
+            let t = (y as f32 / H as f32).powf(0.4);
+            for x in 0..W {
+                pixels[(y * W + x) as usize] = [t * 0.08, t * 0.04, (1.0 - t) * 0.15 + t * 0.04];
+            }
+        }
+
+        // Paint each sun as a bright gaussian blob
+        for sun in &self.suns {
+            let dir = sun.pos.normalize_or_zero();
+            let u = (dir.z.atan2(dir.x) + std::f32::consts::PI) / (2.0 * std::f32::consts::PI);
+            let v = dir.y.clamp(-1.0, 1.0).acos() / std::f32::consts::PI;
+            let cx = (u * W as f32) as i32;
+            let cy = (v * H as f32) as i32;
+            let radius = 24i32;
+            for dy in -radius * 3..=radius * 3 {
+                for dx in -radius * 3..=radius * 3 {
+                    let px = ((cx + dx).rem_euclid(W as i32)) as u32;
+                    let py = (cy + dy).clamp(0, H as i32 - 1) as u32;
+                    let dist = ((dx * dx + dy * dy) as f32).sqrt() / radius as f32;
+                    let falloff = (-dist * dist * 0.5).exp();
+                    let intensity = falloff * 6.0;
+                    let idx = (py * W + px) as usize;
+                    pixels[idx][0] += sun.color.x * intensity;
+                    pixels[idx][1] += sun.color.y * intensity;
+                    pixels[idx][2] += sun.color.z * intensity;
+                }
+            }
+        }
+
+        let mut file = std::fs::File::create("data/env_suns.hdr").expect("failed to create hdr");
+        write!(file, "#?RADIANCE\nFORMAT=32-bit_rle_rgbe\n\n-Y {} +X {}\n", H, W).unwrap();
+        for p in &pixels {
+            file.write_all(&float_to_rgbe(p[0], p[1], p[2])).unwrap();
+        }
+    }
+
     pub fn step_suns(&mut self, dt: f32) {
         crate::logic::step_suns(&mut self.suns, dt);
     }
@@ -122,4 +166,21 @@ impl Scene {
             },
         );
     }
+}
+
+fn float_to_rgbe(r: f32, g: f32, b: f32) -> [u8; 4] {
+    let max = r.max(g).max(b);
+    if max < 1e-32 {
+        return [0, 0, 0, 0];
+    }
+    let (frac, exp) = frexp(max);
+    let scale = frac * 256.0 / max;
+    [(r * scale) as u8, (g * scale) as u8, (b * scale) as u8, (exp + 128) as u8]
+}
+
+fn frexp(x: f32) -> (f32, i32) {
+    let bits = x.to_bits();
+    let exp = ((bits >> 23) & 0xFF) as i32 - 126;
+    let frac = f32::from_bits((bits & 0x807FFFFF) | 0x3F000000);
+    (frac, exp)
 }

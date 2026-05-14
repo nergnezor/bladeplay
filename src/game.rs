@@ -21,6 +21,7 @@ pub struct Game {
     mouse_pos: glam::Vec2,
     pub window_size: winit::dpi::PhysicalSize<u32>,
     surface_ready: bool,
+    frame_count: u32,
 }
 
 impl Drop for Game {
@@ -74,6 +75,7 @@ impl Game {
             mouse_pos: glam::Vec2::ZERO,
             window_size,
             surface_ready: false,
+            frame_count: 0,
         }
     }
 
@@ -163,6 +165,12 @@ impl Game {
     fn on_draw(&mut self) {
         let dt = self.last_update.elapsed().as_secs_f32();
         self.last_update = time::Instant::now();
+
+        self.frame_count += 1;
+        if self.frame_count == 2 {
+            self.scene.write_env_hdr();
+            self.engine.set_environment_map("env_suns.hdr");
+        }
 
         self.engine.update(dt);
         self.scene.step_suns(dt);
