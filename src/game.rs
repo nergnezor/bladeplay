@@ -167,7 +167,8 @@ impl Game {
         self.last_update = time::Instant::now();
 
         self.frame_count += 1;
-        if self.frame_count == 2 {
+        // Write env map on first few frames then every 30 frames so lighting tracks sun movement
+        if self.frame_count <= 2 || self.frame_count % 30 == 0 {
             self.scene.write_env_hdr();
             self.engine.set_environment_map("env_suns.hdr");
         }

@@ -112,7 +112,12 @@ impl Scene {
         for y in 0..H {
             let t = (y as f32 / H as f32).powf(0.4);
             for x in 0..W {
-                pixels[(y * W + x) as usize] = [t * 0.08, t * 0.04, (1.0 - t) * 0.15 + t * 0.04];
+                // Bright enough to light the scene (1.0–3.0 range)
+                pixels[(y * W + x) as usize] = [
+                    t * 0.4 + 0.1,
+                    t * 0.3 + 0.15,
+                    (1.0 - t) * 2.0 + t * 0.3,
+                ];
             }
         }
 
@@ -123,14 +128,14 @@ impl Scene {
             let v = dir.y.clamp(-1.0, 1.0).acos() / std::f32::consts::PI;
             let cx = (u * W as f32) as i32;
             let cy = (v * H as f32) as i32;
-            let radius = 24i32;
-            for dy in -radius * 3..=radius * 3 {
-                for dx in -radius * 3..=radius * 3 {
+            let radius = 20i32;
+            for dy in -radius * 4..=radius * 4 {
+                for dx in -radius * 4..=radius * 4 {
                     let px = ((cx + dx).rem_euclid(W as i32)) as u32;
                     let py = (cy + dy).clamp(0, H as i32 - 1) as u32;
                     let dist = ((dx * dx + dy * dy) as f32).sqrt() / radius as f32;
                     let falloff = (-dist * dist * 0.5).exp();
-                    let intensity = falloff * 6.0;
+                    let intensity = falloff * 80.0;
                     let idx = (py * W + px) as usize;
                     pixels[idx][0] += sun.color.x * intensity;
                     pixels[idx][1] += sun.color.y * intensity;
@@ -139,11 +144,36 @@ impl Scene {
             }
         }
 
-        let mut file = std::fs::File::create("data/env_suns.hdr").expect("failed to create hdr");
-        write!(file, "#?RADIANCE\nFORMAT=32-bit_rle_rgbe\n\n-Y {} +X {}\n", H, W).unwrap();
-        for p in &pixels {
-            file.write_all(&float_to_rgbe(p[0], p[1], p[2])).unwrap();
+        let mut data = Vec::new();
+        write!(data, "#?RADIANCE\nFORMAT=32-bit_rle_rgbe\n\n-Y {} +X {}\n", H, W).unwrap();
+        // Write new-style RLE scanlines: each starts with [2, 2, width_hi, width_lo]
+        // then 4 channels each RLE-encoded separately
+        for y in 0..H {
+            // Scanline header
+            data.push(2);
+            data.push(2);
+            data.push((W >> 8) as u8);
+            data.push((W & 0xFF) as u8);
+            // Gather RGBE for this scanline
+            let mut rgbe_row = vec![[0u8; 4]; W as usize];
+            for x in 0..W {
+                let p = pixels[(y * W + x) as usize];
+                rgbe_row[x as usize] = float_to_rgbe(p[0], p[1], p[2]);
+            }
+            // Write each channel as uncompressed RLE (run=0 means literal)
+            for chan in 0..4usize {
+                let bytes: Vec<u8> = rgbe_row.iter().map(|px| px[chan]).collect();
+                let mut i = 0;
+                while i < bytes.len() {
+                    // emit as non-run literal block of up to 128 bytes
+                    let len = (bytes.len() - i).min(128);
+                    data.push(len as u8);
+                    data.extend_from_slice(&bytes[i..i + len]);
+                    i += len;
+                }
+            }
         }
+        std::fs::write("data/env_suns.hdr", &data).expect("failed to write hdr");
     }
 
     pub fn step_suns(&mut self, dt: f32) {
