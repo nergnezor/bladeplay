@@ -1,9 +1,6 @@
 use std::path::PathBuf;
 
-pub const BALL_Y: f32 = 0.5;
-pub const CUBE_Y: f32 = 0.5;
-/// Height of the horizontal plane used for mouse drag projection.
-pub const DRAG_Y: f32 = 0.7;
+pub use interact_logic::{BALL_Y, CUBE_Y, DRAG_Y, Sun};
 
 pub struct Scene {
     pub _ground: blade_engine::ObjectHandle,
@@ -11,12 +8,34 @@ pub struct Scene {
     pub cube: blade_engine::ObjectHandle,
     pub ball_pos: glam::Vec3,
     pub cube_pos: glam::Vec3,
-    pub light: blade_render::RasterConfig,
+    pub suns: [Sun; 3],
 }
 
 impl Scene {
     pub fn new(window: &winit::window::Window) -> (blade_engine::Engine, Self) {
         let data_path = PathBuf::from("data");
+
+        let suns = [
+            Sun {
+                pos: glam::Vec3::new(-12.0, 3.0, -80.0),
+                vel: glam::Vec3::new(0.6, 0.05, 0.0),
+                color: glam::Vec3::new(0.6, 0.0, 1.0),
+                mass: 1.0,
+            },
+            Sun {
+                pos: glam::Vec3::new(4.0, 5.0, -90.0),
+                vel: glam::Vec3::new(-0.4, -0.03, 0.1),
+                color: glam::Vec3::new(1.0, 0.2, 0.6),
+                mass: 1.2,
+            },
+            Sun {
+                pos: glam::Vec3::new(14.0, 2.0, -75.0),
+                vel: glam::Vec3::new(-0.3, 0.04, -0.1),
+                color: glam::Vec3::new(1.0, 0.5, 0.0),
+                mass: 0.8,
+            },
+        ];
+
         let mut engine = blade_engine::Engine::new(
             blade_engine::Presentation::Window(window),
             &blade_engine::config::Engine {
@@ -24,7 +43,7 @@ impl Scene {
                 data_path: data_path.as_os_str().to_string_lossy().into_owned(),
                 cache_path: "asset-cache".to_string(),
                 time_step: 0.01,
-                render_backend: blade_engine::config::RenderBackend::Rasterizer,
+                render_backend: blade_engine::config::RenderBackend::RayTracer,
                 gui_enabled: cfg!(debug_assertions),
             },
         );
@@ -79,24 +98,14 @@ impl Scene {
             blade_engine::DynamicInput::SetPosition,
         );
 
-        let light = blade_render::RasterConfig::default();
-        engine.set_raster_config(light);
-
-        (
-            engine,
-            Self {
-                _ground,
-                ball,
-                cube,
-                ball_pos,
-                cube_pos,
-                light,
-            },
-        )
+        let scene = Self { _ground, ball, cube, ball_pos, cube_pos, suns };
+        (engine, scene)
     }
 
-    /// Push current target positions into the physics engine. Called every frame
-    /// after `engine.update` so kinematic integration doesn't overwrite them.
+    pub fn step_suns(&mut self, dt: f32) {
+        crate::logic::step_suns(&mut self.suns, dt);
+    }
+
     pub fn sync_to_engine(&self, engine: &mut blade_engine::Engine) {
         engine.teleport_object(
             self.ball,

@@ -3,6 +3,12 @@ mod hud;
 mod picking;
 mod scene;
 
+#[hot_lib_reloader::hot_module(dylib = "interact_logic")]
+mod logic {
+    use interact_logic::Sun;
+    hot_functions_from_file!("interact-logic/src/lib.rs");
+}
+
 use game::{Game, QuitEvent};
 
 struct App {

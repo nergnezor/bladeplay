@@ -165,6 +165,7 @@ impl Game {
         self.last_update = time::Instant::now();
 
         self.engine.update(dt);
+        self.scene.step_suns(dt);
         self.scene.sync_to_engine(&mut self.engine);
 
         let raw_input = self.egui_state.take_egui_input(&self.window);

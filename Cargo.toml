@@ -1,12 +1,19 @@
+[workspace]
+members = [".", "interact-logic"]
+resolver = "2"
+
 [package]
 name = "interact"
 version = "0.1.0"
 edition = "2024"
 
 [dependencies]
+interact-logic = { path = "interact-logic" }
+hot-lib-reloader = "0.7"
 blade-engine = { git = "https://github.com/nergnezor/blade", branch = "wayland-niri-fix" }
 blade-helpers = { git = "https://github.com/nergnezor/blade", branch = "wayland-niri-fix" }
 blade-render = { git = "https://github.com/nergnezor/blade", branch = "wayland-niri-fix" }
+blade-particle = { git = "https://github.com/nergnezor/blade", branch = "wayland-niri-fix" }
 egui = "0.34"
 egui-winit = { version = "0.34", default-features = false, features = ["links"] }
 glam = { version = "0.30", features = ["mint"] }
