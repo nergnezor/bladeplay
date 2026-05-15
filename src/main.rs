@@ -1,13 +1,8 @@
 mod game;
+mod hot_logic;
 mod hud;
 mod picking;
 mod scene;
-
-#[hot_lib_reloader::hot_module(dylib = "interact_logic")]
-mod logic {
-    use interact_logic::Sun;
-    hot_functions_from_file!("interact-logic/src/lib.rs");
-}
 
 use game::{Game, QuitEvent};
 
@@ -41,6 +36,11 @@ impl winit::application::ApplicationHandler for App {
 }
 
 fn main() {
+    // Prevent SIGCHLD from being delivered when cargo-build subprocesses exit.
+    // POSIX: with SIG_IGN, children are auto-reaped with no signal to the parent.
+    #[cfg(unix)]
+    unsafe { libc::signal(libc::SIGCHLD, libc::SIG_IGN); }
+
     env_logger::init();
     let event_loop = winit::event_loop::EventLoop::new().unwrap();
     let mut app = App { game: None };

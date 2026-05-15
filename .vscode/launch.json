@@ -8,13 +8,15 @@
 			"program": "${workspaceFolder}/target/debug/interact",
 			"args": [],
 			"cwd": "${workspaceFolder}",
+			"terminal": "console",
 			"preLaunchTask": "cargo build",
 			"env": {
 				"RUST_LOG": "debug",
 				"RUST_BACKTRACE": "1"
 			},
 			"postRunCommands": [
-				"process handle -p true -s false -n false SIGTRAP"
+				"process handle -p true -s false -n false SIGTRAP",
+				"process handle -p true -s false -n false SIGCHLD"
 			]
 		}
 	]

@@ -22,6 +22,9 @@ pub struct Game {
     pub window_size: winit::dpi::PhysicalSize<u32>,
     surface_ready: bool,
     frame_count: u32,
+    env_gen: u32,
+    logic_src_mtime: time::SystemTime,
+    rebuild_process: Option<std::process::Child>,
 }
 
 impl Drop for Game {
@@ -76,6 +79,9 @@ impl Game {
             window_size,
             surface_ready: false,
             frame_count: 0,
+            env_gen: 0,
+            logic_src_mtime: logic_src_mtime(),
+            rebuild_process: None,
         }
     }
 
@@ -166,11 +172,20 @@ impl Game {
         let dt = self.last_update.elapsed().as_secs_f32();
         self.last_update = time::Instant::now();
 
+        self.check_hot_reload();
+
         self.frame_count += 1;
         // Write env map on first few frames then every 30 frames so lighting tracks sun movement
         if self.frame_count <= 2 || self.frame_count % 30 == 0 {
             self.scene.write_env_hdr();
-            self.engine.set_environment_map("env_suns.hdr");
+            // Use a new filename each time to bypass the asset-hub path cache
+            self.env_gen += 1;
+            let new_name = format!("env_suns_{}.hdr", self.env_gen);
+            let _ = std::fs::rename("data/env_suns.hdr", format!("data/{new_name}"));
+            if self.env_gen > 1 {
+                let _ = std::fs::remove_file(format!("data/env_suns_{}.hdr", self.env_gen - 1));
+            }
+            self.engine.set_environment_map(&new_name);
         }
 
         self.engine.update(dt);
@@ -203,4 +218,36 @@ impl Game {
 
         let _ = egui_output.viewport_output[&self.egui_viewport_id].repaint_delay;
     }
+
+    fn check_hot_reload(&mut self) {
+        // Poll finished rebuild
+        if let Some(ref mut child) = self.rebuild_process {
+            match child.try_wait() {
+                Ok(None) => {} // still building
+                _ => { self.rebuild_process = None; } // done or already reaped
+            }
+        }
+
+        // Check if source changed and trigger a rebuild
+        let mtime = logic_src_mtime();
+        if mtime != self.logic_src_mtime {
+            self.logic_src_mtime = mtime;
+            if self.rebuild_process.is_none() {
+                eprintln!("[hot_logic] source changed, spawning cargo build...");
+                self.rebuild_process = std::process::Command::new("cargo")
+                    .args(["build", "-p", "interact-logic"])
+                    .spawn()
+                    .ok();
+            }
+        }
+
+        // Always poll the .so file (handles external rebuilds too)
+        crate::hot_logic::try_reload();
+    }
+}
+
+fn logic_src_mtime() -> time::SystemTime {
+    std::fs::metadata("interact-logic/src/lib.rs")
+        .and_then(|m| m.modified())
+        .unwrap_or(time::SystemTime::UNIX_EPOCH)
 }

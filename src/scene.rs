@@ -113,11 +113,11 @@ impl Scene {
     }
 
     pub fn write_env_hdr(&self) {
-        crate::logic::write_env_hdr(&self.suns);
+        crate::hot_logic::write_env_hdr(&self.suns);
     }
 
     pub fn step_suns(&mut self, dt: f32) {
-        crate::logic::step_suns(&mut self.suns, dt);
+        crate::hot_logic::step_suns(&mut self.suns, dt);
     }
 
     pub fn sync_to_engine(&self, engine: &mut blade_engine::Engine) {

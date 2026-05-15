@@ -6,8 +6,8 @@ pub const DRAG_Y: f32 = 0.7;
 const SKY_ZENITH: [f32; 3] = [0.02, 0.02, 0.5];   // color at top of sky
 const SKY_HORIZON: [f32; 3] = [0.25, 0.08, 0.06];  // extra glow at horizon
 const SKY_NADIR: [f32; 3] = [0.12, 0.06, 0.03];    // color at bottom (ground reflection)
-const SUN_INTENSITY: f32 = 20.0;                    // brightness of sun blobs in env-map
-const SUN_RADIUS: i32 = 18;                         // angular size of suns in env-map pixels
+const SUN_INTENSITY: f32 = 2.0;                    // brightness of sun blobs in env-map
+const SUN_RADIUS: i32 = 1;                         // angular size of suns in env-map pixels
 
 const G: f32 = 80.0;
 
