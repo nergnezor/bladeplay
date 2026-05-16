@@ -1,8 +1,8 @@
 // --- Tweakable sky/sun constants (hot-reload by saving this file) ---
 const SKY_ZENITH: [f32; 3] = [1.2, 0.9, 1.8];
-const SKY_HORIZON: [f32; 3] = [0.6, 0.4, 0.5];
+const SKY_HORIZON: [f32; 3] = [0.6, 0.4, 0.8];
 const SKY_NADIR: [f32; 3] = [0.15, 0.10, 0.12];
-const SUN_INTENSITY: f32 = 200000.0;
+const SUN_INTENSITY: f32 = 2000000.0;
 const SUN_RADIUS: f32 = 0.3;
 
 #[derive(Clone)]
@@ -13,7 +13,7 @@ pub struct Sun {
 }
 
 // Suns orbit around the scene center so colored light hits front and top faces
-const ORBIT_CENTER: glam::Vec3 = glam::Vec3::new(0.0, 5.0, 0.0);
+const ORBIT_CENTER: glam::Vec3 = glam::Vec3::new(0.0, 5.0, -1000.0);
 
 #[no_mangle]
 pub extern "C" fn make_suns(out: &mut [Sun; 4]) {
@@ -37,6 +37,7 @@ pub extern "C" fn step_suns(suns: &mut [Sun; 4], dt: f32) {
         let angle = rel.z.atan2(rel.x) + sun.vel.z * dt;
         sun.pos.x = ORBIT_CENTER.x + r * angle.cos();
         sun.pos.z = ORBIT_CENTER.z + r * angle.sin();
+		// return;
     }
 }
 

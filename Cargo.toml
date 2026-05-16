@@ -10,6 +10,7 @@ edition = "2024"
 [dependencies]
 interact-logic = { path = "interact-logic" }
 libloading = "0.8"
+blade-asset = { git = "https://github.com/nergnezor/blade", branch = "wayland-niri-fix" }
 blade-engine = { git = "https://github.com/nergnezor/blade", branch = "wayland-niri-fix" }
 blade-helpers = { git = "https://github.com/nergnezor/blade", branch = "wayland-niri-fix" }
 blade-render = { git = "https://github.com/nergnezor/blade", branch = "wayland-niri-fix" }
