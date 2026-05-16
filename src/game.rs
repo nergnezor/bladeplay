@@ -172,7 +172,7 @@ impl Game {
         self.check_hot_reload();
 
         self.frame_count += 1;
-        if self.frame_count <= 2 || self.frame_count % 30 == 0 {
+        {
             let pixels = self.scene.make_env_pixels();
             self.engine.set_environment_map_hdr_data(
                 interact_logic::ENV_W,
@@ -183,12 +183,6 @@ impl Game {
 
         self.engine.update(dt);
         self.scene.step_suns(dt);
-
-        // Push sun positions into their objects before sync
-        let suns = self.scene.suns.clone();
-        for (i, sun) in suns.iter().enumerate() {
-            self.scene.set_pos(101 + i as u64, sun.pos);
-        }
 
         self.scene.sync_dynamic(&mut self.engine, dt);
 

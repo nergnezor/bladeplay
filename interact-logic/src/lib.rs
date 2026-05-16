@@ -7,7 +7,7 @@ const SKY_ZENITH: [f32; 3] = [0.02, 0.02, 0.5];   // color at top of sky
 const SKY_HORIZON: [f32; 3] = [0.25, 0.08, 0.06];  // extra glow at horizon
 const SKY_NADIR: [f32; 3] = [0.12, 0.06, 0.03];    // color at bottom (ground reflection)
 const SUN_INTENSITY: f32 = 20.0;                    // brightness of sun blobs in env-map
-const SUN_RADIUS: i32 = 6;                          // angular size of suns in env-map pixels
+const SUN_RADIUS: i32 = 3;                          // angular size of suns in env-map pixels
 
 const G: f32 = 80.0;
 
@@ -19,34 +19,27 @@ pub struct Sun {
     pub mass: f32,
 }
 
+// Orbital center — suns circle around this point, always in front of camera
+const ORBIT_CENTER: glam::Vec3 = glam::Vec3::new(0.0, 0.0, -20.0);
+
 #[no_mangle]
 pub extern "C" fn make_suns(out: &mut [Sun; 3]) {
+    // vel.z stores angular speed (rad/s); pos is on the orbital circle
     *out = [
-        Sun { pos: glam::Vec3::new(-8.0, 6.0, -10.0), vel: glam::Vec3::new(0.6, 0.05, 0.0),   color: glam::Vec3::new(0.6, 0.0, 1.0),  mass: 1.0 },
-        Sun { pos: glam::Vec3::new( 2.0, 9.0, -12.0), vel: glam::Vec3::new(-0.4, -0.03, 0.1), color: glam::Vec3::new(1.0, 0.2, 0.6),  mass: 1.2 },
-        Sun { pos: glam::Vec3::new( 8.0, 5.0,  -9.0), vel: glam::Vec3::new(-0.3, 0.04, -0.1), color: glam::Vec3::new(1.0, 0.5, 0.0),  mass: 0.8 },
+        Sun { pos: glam::Vec3::new(-10.0, 8.0, -20.0), vel: glam::Vec3::new(0.0, 0.0,  0.18), color: glam::Vec3::new(0.6, 0.0, 1.0), mass: 1.0 },
+        Sun { pos: glam::Vec3::new(  6.0, 12.0, -14.0), vel: glam::Vec3::new(0.0, 0.0, -0.13), color: glam::Vec3::new(1.0, 0.2, 0.6), mass: 1.0 },
+        Sun { pos: glam::Vec3::new(  9.0,  6.0, -22.0), vel: glam::Vec3::new(0.0, 0.0,  0.10), color: glam::Vec3::new(1.0, 0.5, 0.0), mass: 1.0 },
     ];
 }
 
 #[no_mangle]
 pub extern "C" fn step_suns(suns: &mut [Sun; 3], dt: f32) {
-    let positions = [suns[0].pos, suns[1].pos, suns[2].pos];
-    let masses = [suns[0].mass, suns[1].mass, suns[2].mass];
-
-    for i in 0..3 {
-        let mut acc = glam::Vec3::ZERO;
-        for j in 0..3 {
-            if i == j {
-                continue;
-            }
-            let diff = positions[j] - positions[i];
-            let dist_sq = diff.length_squared().max(0.5);
-            acc += diff.normalize() * (G * masses[j] / dist_sq);
-        }
-        suns[i].vel += acc * dt;
-    }
     for sun in suns.iter_mut() {
-        sun.pos += sun.vel * dt;
+        let rel = sun.pos - ORBIT_CENTER;
+        let r = (rel.x * rel.x + rel.z * rel.z).sqrt().max(0.1);
+        let angle = rel.z.atan2(rel.x) + sun.vel.z * dt;
+        sun.pos.x = ORBIT_CENTER.x + r * angle.cos();
+        sun.pos.z = ORBIT_CENTER.z + r * angle.sin();
     }
 }
 
@@ -125,22 +118,7 @@ pub extern "C" fn scene_objects(out: &mut SceneDesc) {
         color: [1.0, 1.0, 1.0], emissive: 0.0, no_gravity: 1,
     });
 
-    // Sun spheres — emissive with their actual colors
-    out.push(ObjectDesc {
-        id: 101, model: model("sphere.glb"),
-        pos: [-8.0, 6.0, -10.0], scale: 0.8,
-        color: [0.6, 0.0, 1.0], emissive: 1.0, no_gravity: 1,
-    });
-    out.push(ObjectDesc {
-        id: 102, model: model("sphere.glb"),
-        pos: [2.0, 9.0, -12.0], scale: 0.8,
-        color: [1.0, 0.2, 0.6], emissive: 1.0, no_gravity: 1,
-    });
-    out.push(ObjectDesc {
-        id: 103, model: model("sphere.glb"),
-        pos: [8.0, 5.0, -9.0], scale: 0.8,
-        color: [1.0, 0.5, 0.0], emissive: 1.0, no_gravity: 1,
-    });
+    // Suns are pure light sources — rendered only in the env-map (no mesh objects)
 
     // Ball and cube
     out.push(ObjectDesc {
@@ -197,19 +175,26 @@ fn compute_env_pixels(suns: &[Sun; 3], pixels: &mut [[f32; 3]]) {
         }
     }
 
-    // Paint each sun as a bright gaussian blob
+    // Paint each sun as a bright gaussian blob (sub-pixel accurate to avoid stepping)
     for sun in suns {
         let dir = sun.pos.normalize_or_zero();
         let u = (dir.x.atan2(dir.z) + std::f32::consts::PI) / (2.0 * std::f32::consts::PI);
         let v = (0.5 - dir.y.clamp(-1.0, 1.0).asin() / std::f32::consts::PI).clamp(0.0, 1.0);
-        let cx = (u * W as f32) as i32;
-        let cy = (v * H as f32) as i32;
-        let radius = SUN_RADIUS;
-        for dy in -radius * 4..=radius * 4 {
-            for dx in -radius * 4..=radius * 4 {
+        let cx_f = u * W as f32;
+        let cy_f = v * H as f32;
+        let cx = cx_f as i32;
+        let cy = cy_f as i32;
+        let sub_x = cx_f - cx as f32;  // fractional offset within pixel
+        let sub_y = cy_f - cy as f32;
+        let radius = SUN_RADIUS as f32;
+        let r_i = SUN_RADIUS * 4;
+        for dy in -r_i..=r_i {
+            for dx in -r_i..=r_i {
                 let px = ((cx + dx).rem_euclid(W as i32)) as u32;
                 let py = (cy + dy).clamp(0, H as i32 - 1) as u32;
-                let dist = ((dx * dx + dy * dy) as f32).sqrt() / radius as f32;
+                let fdx = dx as f32 - sub_x;
+                let fdy = dy as f32 - sub_y;
+                let dist = (fdx * fdx + fdy * fdy).sqrt() / radius;
                 let falloff = (-dist * dist * 0.5).exp();
                 let intensity = falloff * SUN_INTENSITY;
                 let idx = (py * W + px) as usize;
