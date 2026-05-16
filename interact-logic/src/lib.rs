@@ -7,7 +7,7 @@ const SKY_ZENITH: [f32; 3] = [0.02, 0.02, 0.5];   // color at top of sky
 const SKY_HORIZON: [f32; 3] = [0.25, 0.08, 0.06];  // extra glow at horizon
 const SKY_NADIR: [f32; 3] = [0.12, 0.06, 0.03];    // color at bottom (ground reflection)
 const SUN_INTENSITY: f32 = 20.0;                    // brightness of sun blobs in env-map
-const SUN_RADIUS: i32 = 18;                         // angular size of suns in env-map pixels
+const SUN_RADIUS: i32 = 6;                          // angular size of suns in env-map pixels
 
 const G: f32 = 80.0;
 
@@ -22,9 +22,9 @@ pub struct Sun {
 #[no_mangle]
 pub extern "C" fn make_suns(out: &mut [Sun; 3]) {
     *out = [
-        Sun { pos: glam::Vec3::new(-15.0, 12.0, -20.0), vel: glam::Vec3::new(0.6, 0.05, 0.0),   color: glam::Vec3::new(0.6, 0.0, 1.0),  mass: 1.0 },
-        Sun { pos: glam::Vec3::new(  3.0, 18.0, -25.0), vel: glam::Vec3::new(-0.4, -0.03, 0.1), color: glam::Vec3::new(1.0, 0.2, 0.6),  mass: 1.2 },
-        Sun { pos: glam::Vec3::new( 15.0, 10.0, -18.0), vel: glam::Vec3::new(-0.3, 0.04, -0.1), color: glam::Vec3::new(1.0, 0.5, 0.0),  mass: 0.8 },
+        Sun { pos: glam::Vec3::new(-8.0, 6.0, -10.0), vel: glam::Vec3::new(0.6, 0.05, 0.0),   color: glam::Vec3::new(0.6, 0.0, 1.0),  mass: 1.0 },
+        Sun { pos: glam::Vec3::new( 2.0, 9.0, -12.0), vel: glam::Vec3::new(-0.4, -0.03, 0.1), color: glam::Vec3::new(1.0, 0.2, 0.6),  mass: 1.2 },
+        Sun { pos: glam::Vec3::new( 8.0, 5.0,  -9.0), vel: glam::Vec3::new(-0.3, 0.04, -0.1), color: glam::Vec3::new(1.0, 0.5, 0.0),  mass: 0.8 },
     ];
 }
 
@@ -58,12 +58,13 @@ pub extern "C" fn step_suns(suns: &mut [Sun; 3], dt: f32) {
 #[repr(C)]
 #[derive(Clone, Copy)]
 pub struct ObjectDesc {
-    pub id:       u64,
-    pub model:    [u8; 32],  // glb filename, null-terminated, relative to data/
-    pub pos:      [f32; 3],
-    pub scale:    f32,
-    pub color:    [f32; 3],  // RGB
-    pub emissive: f32,       // 0 = lit, >0 = glowing
+    pub id:         u64,
+    pub model:      [u8; 32],  // glb filename, null-terminated, relative to data/
+    pub pos:        [f32; 3],
+    pub scale:      f32,
+    pub color:      [f32; 3],  // RGB
+    pub emissive:   f32,       // 0 = lit, >0 = glowing
+    pub no_gravity: u32,       // 1 = static/kinematic, 0 = falls
 }
 
 impl ObjectDesc {
@@ -95,6 +96,7 @@ impl SceneDesc {
                 id: 0, model: model("sphere.glb"),
                 pos: [0.0; 3], scale: 1.0,
                 color: [1.0; 3], emissive: 0.0,
+                no_gravity: 0,
             }; MAX_SCENE_OBJECTS],
             count: 0,
         }
@@ -107,25 +109,66 @@ impl SceneDesc {
     }
 }
 
+// Reserved IDs: 100=ground, 101-103=sun spheres, 104=ball, 105=cube
+// IDs 1-99 are free for user objects.
+
 /// Returns the desired scene for this frame.
 /// Edit freely — objects are added/removed live on save.
 #[no_mangle]
 pub extern "C" fn scene_objects(out: &mut SceneDesc) {
     *out = SceneDesc::new();
+
+    // Ground
+    out.push(ObjectDesc {
+        id: 100, model: model("plane.glb"),
+        pos: [0.0, 0.0, 0.0], scale: 1.0,
+        color: [1.0, 1.0, 1.0], emissive: 0.0, no_gravity: 1,
+    });
+
+    // Sun spheres — emissive with their actual colors
+    out.push(ObjectDesc {
+        id: 101, model: model("sphere.glb"),
+        pos: [-8.0, 6.0, -10.0], scale: 0.8,
+        color: [0.6, 0.0, 1.0], emissive: 1.0, no_gravity: 1,
+    });
+    out.push(ObjectDesc {
+        id: 102, model: model("sphere.glb"),
+        pos: [2.0, 9.0, -12.0], scale: 0.8,
+        color: [1.0, 0.2, 0.6], emissive: 1.0, no_gravity: 1,
+    });
+    out.push(ObjectDesc {
+        id: 103, model: model("sphere.glb"),
+        pos: [8.0, 5.0, -9.0], scale: 0.8,
+        color: [1.0, 0.5, 0.0], emissive: 1.0, no_gravity: 1,
+    });
+
+    // Ball and cube
+    out.push(ObjectDesc {
+        id: 104, model: model("sphere.glb"),
+        pos: [-2.0, 0.5, 0.0], scale: 1.0,
+        color: [1.0, 1.0, 1.0], emissive: 0.0, no_gravity: 1,
+    });
+    out.push(ObjectDesc {
+        id: 105, model: model("cube.glb"),
+        pos: [2.0, 0.5, 0.0], scale: 1.0,
+        color: [1.0, 1.0, 1.0], emissive: 0.0, no_gravity: 1,
+    });
+
+    // --- User objects below — edit freely ---
     out.push(ObjectDesc {
         id: 1, model: model("sphere.glb"),
         pos: [0.0, 5.0, 0.0], scale: 1.0,
-        color: [0.0, 1.0, 0.4], emissive: 0.0,
+        color: [0.0, 1.0, 0.4], emissive: 0.0, no_gravity: 0,
     });
     out.push(ObjectDesc {
         id: 2, model: model("torus.glb"),
         pos: [2.0, 4.0, 0.0], scale: 1.0,
-        color: [1.0, 0.3, 0.8], emissive: 0.0,
+        color: [1.0, 0.3, 0.8], emissive: 0.0, no_gravity: 0,
     });
     out.push(ObjectDesc {
         id: 3, model: model("star.glb"),
         pos: [-2.0, 6.0, 0.0], scale: 2.0,
-        color: [1.0, 0.9, 0.1], emissive: 0.0,
+        color: [1.0, 0.9, 0.1], emissive: 0.0, no_gravity: 0,
     });
 }
 

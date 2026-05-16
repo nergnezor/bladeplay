@@ -10,23 +10,18 @@ pub struct Game {
     pub scene: Scene,
     pub camera: ControlledCamera,
     pub window: winit::window::Window,
-    pub ball: blade_engine::ObjectHandle,
-    pub cube: blade_engine::ObjectHandle,
     last_update: time::Instant,
     egui_state: egui_winit::State,
     egui_viewport_id: egui::ViewportId,
-    // drag state
-    dragging: Option<blade_engine::ObjectHandle>,
-    drag_offset: glam::Vec3,
     dragging_dyn: Option<u64>,
     drag_y: f32,
+    drag_offset: glam::Vec3,
     mouse_pos: glam::Vec2,
     pub window_size: winit::dpi::PhysicalSize<u32>,
     surface_ready: bool,
     frame_count: u32,
     logic_src_mtime: time::SystemTime,
     rebuild_process: Option<std::process::Child>,
-    data_mtimes: std::collections::HashMap<&'static str, time::SystemTime>,
 }
 
 impl Drop for Game {
@@ -62,30 +57,20 @@ impl Game {
             egui_winit::State::new(egui_context, egui_viewport_id, &window, None, None, None);
 
         let window_size = window.inner_size();
-        let ball = scene.ball;
-        let cube = scene.cube;
 
         Self {
-            engine,
-            scene,
-            camera,
-            window,
-            ball,
-            cube,
+            engine, scene, camera, window,
             last_update: time::Instant::now(),
-            egui_state,
-            egui_viewport_id,
-            dragging: None,
-            drag_offset: glam::Vec3::ZERO,
+            egui_state, egui_viewport_id,
             dragging_dyn: None,
             drag_y: 2.0,
+            drag_offset: glam::Vec3::ZERO,
             mouse_pos: glam::Vec2::ZERO,
             window_size,
             surface_ready: false,
             frame_count: 0,
             logic_src_mtime: logic_src_mtime(),
             rebuild_process: None,
-            data_mtimes: data_mtimes(),
         }
     }
 
@@ -111,24 +96,12 @@ impl Game {
             }
             winit::event::WindowEvent::CursorMoved { position, .. } => {
                 self.mouse_pos = glam::Vec2::new(position.x as f32, position.y as f32);
-                let (origin, dir) =
-                    picking::screen_ray(&self.camera, self.window_size, self.mouse_pos);
                 if let Some(id) = self.dragging_dyn {
+                    let (origin, dir) =
+                        picking::screen_ray(&self.camera, self.window_size, self.mouse_pos);
                     if let Some(hit) = picking::ray_plane_hit(origin, dir, self.drag_y) {
-                        let world = hit + self.drag_offset;
-                        let target = glam::Vec3::new(world.x, self.drag_y, world.z);
-                        self.scene.drag_to(id, target, delta);
-                    }
-                } else if let Some(handle) = self.dragging {
-                    if let Some(hit) = picking::ray_plane_hit(origin, dir, crate::scene::DRAG_Y) {
-                        let world = hit + self.drag_offset;
-                        if handle == self.ball {
-                            self.scene.ball_pos =
-                                glam::Vec3::new(world.x, crate::scene::BALL_Y, world.z);
-                        } else {
-                            self.scene.cube_pos =
-                                glam::Vec3::new(world.x, crate::scene::CUBE_Y, world.z);
-                        }
+                        let target = hit + self.drag_offset;
+                        self.scene.drag_to(id, glam::Vec3::new(target.x, self.drag_y, target.z), delta);
                     }
                 }
             }
@@ -166,26 +139,17 @@ impl Game {
                 winit::event::ElementState::Pressed => {
                     let (origin, dir) =
                         picking::screen_ray(&self.camera, self.window_size, self.mouse_pos);
-                    // Try dynamic objects first — cast ray against each object's actual y
                     if let Some((id, y)) = self.scene.pick_dynamic_ray(origin, dir, picking::PICK_RADIUS) {
                         self.drag_y = y;
                         self.drag_offset = glam::Vec3::ZERO;
                         self.scene.start_drag(id);
                         self.dragging_dyn = Some(id);
                     }
-                    // Fall back to static objects
-                    if self.dragging_dyn.is_none() {
-                        if let Some((handle, offset)) = picking::pick_object(self, self.mouse_pos) {
-                            self.dragging = Some(handle);
-                            self.drag_offset = offset;
-                        }
-                    }
                 }
                 winit::event::ElementState::Released => {
                     if let Some(id) = self.dragging_dyn.take() {
                         self.scene.release_drag(id);
                     }
-                    self.dragging = None;
                 }
             },
             winit::event::WindowEvent::RedrawRequested => {
@@ -208,7 +172,6 @@ impl Game {
         self.check_hot_reload();
 
         self.frame_count += 1;
-        // Upload env map directly to GPU every 30 frames so lighting tracks sun movement
         if self.frame_count <= 2 || self.frame_count % 30 == 0 {
             let pixels = self.scene.make_env_pixels();
             self.engine.set_environment_map_hdr_data(
@@ -220,8 +183,14 @@ impl Game {
 
         self.engine.update(dt);
         self.scene.step_suns(dt);
+
+        // Push sun positions into their objects before sync
+        let suns = self.scene.suns.clone();
+        for (i, sun) in suns.iter().enumerate() {
+            self.scene.set_pos(101 + i as u64, sun.pos);
+        }
+
         self.scene.sync_dynamic(&mut self.engine, dt);
-        self.scene.sync_to_engine(&mut self.engine);
 
         let raw_input = self.egui_state.take_egui_input(&self.window);
         let egui_context = self.egui_state.egui_ctx().clone();
@@ -251,15 +220,13 @@ impl Game {
     }
 
     fn check_hot_reload(&mut self) {
-        // Poll finished rebuild
         if let Some(ref mut child) = self.rebuild_process {
             match child.try_wait() {
-                Ok(None) => {} // still building
-                _ => { self.rebuild_process = None; } // done or already reaped
+                Ok(None) => {}
+                _ => { self.rebuild_process = None; }
             }
         }
 
-        // Check if source changed and trigger a rebuild
         let mtime = logic_src_mtime();
         if mtime != self.logic_src_mtime {
             self.logic_src_mtime = mtime;
@@ -272,19 +239,11 @@ impl Game {
             }
         }
 
-        // Always poll the .so file (handles external rebuilds too)
         crate::hot_logic::try_reload();
         if crate::hot_logic::take_reloaded() {
             self.scene.reset_suns();
         }
 
-        // Reload models if any data file changed on disk
-        let new_mtimes = data_mtimes();
-        if new_mtimes != self.data_mtimes {
-            self.data_mtimes = new_mtimes;
-            self.engine.reload_models();
-            eprintln!("[hot_reload] data file changed, reloading models");
-        }
     }
 }
 
@@ -292,13 +251,4 @@ fn logic_src_mtime() -> time::SystemTime {
     std::fs::metadata("interact-logic/src/lib.rs")
         .and_then(|m| m.modified())
         .unwrap_or(time::SystemTime::UNIX_EPOCH)
-}
-
-const DATA_FILES: &[&str] = &["data/plane.glb", "data/sphere.glb", "data/cube.glb", "data/cylinder.glb"];
-
-fn data_mtimes() -> std::collections::HashMap<&'static str, time::SystemTime> {
-    DATA_FILES.iter().map(|&f| {
-        let t = std::fs::metadata(f).and_then(|m| m.modified()).unwrap_or(time::SystemTime::UNIX_EPOCH);
-        (f, t)
-    }).collect()
 }
