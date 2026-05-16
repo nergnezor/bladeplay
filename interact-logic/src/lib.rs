@@ -1,9 +1,9 @@
 // --- Tweakable sky/sun constants (hot-reload by saving this file) ---
-const SKY_ZENITH: [f32; 3] = [0.08, 0.12, 0.40];   // deep blue
-const SKY_HORIZON: [f32; 3] = [0.55, 0.18, 0.04];  // dark burnt orange
-const SKY_NADIR: [f32; 3] = [0.03, 0.01, 0.01];
-const SUN_INTENSITY: f32 = 10000000.0;
-const SUN_RADIUS: f32 = 0.001;
+const SKY_ZENITH: [f32; 3] = [0.10, 0.15, 0.45];
+const SKY_HORIZON: [f32; 3] = [0.80, 0.30, 0.05];
+const SKY_NADIR: [f32; 3] = [0.05, 0.02, 0.01];
+const SUN_INTENSITY: f32 = 200000000.0;
+const SUN_RADIUS: f32 = 0.18;
 
 #[derive(Clone)]
 pub struct Sun {
@@ -17,11 +17,10 @@ const ORBIT_CENTER: glam::Vec3 = glam::Vec3::new(0.0, 0.0, 0.0);
 #[no_mangle]
 pub extern "C" fn make_suns(out: &mut [Sun; 4]) {
     *out = [
-        Sun { pos: glam::Vec3::new(   0.0,  1.5, -120.0), vel: glam::Vec3::new(0.0, 0.0, 0.0), color: glam::Vec3::new(1.0, 0.60, 0.15) },
-        Sun { pos: glam::Vec3::new(  70.0,  2.0, -100.0), vel: glam::Vec3::new(0.0, 0.0, 0.0), color: glam::Vec3::new(0.95, 0.30, 0.04) },
-        Sun { pos: glam::Vec3::new( -65.0,  2.5, -105.0), vel: glam::Vec3::new(0.0, 0.0, 0.0), color: glam::Vec3::new(0.90, 0.35, 0.20) },
-        // Fjärde — inaktiv
-        Sun { pos: glam::Vec3::new(  0.0, -10.0,  1.0), vel: glam::Vec3::new(0.0, 0.0, 0.0), color: glam::Vec3::new(0.0, 0.0, 0.0) },
+        Sun { pos: glam::Vec3::new(   0.0,  0.3, -120.0), vel: glam::Vec3::new(0.0, 0.0,  0.006), color: glam::Vec3::new(1.0, 0.50, 0.05) },
+        Sun { pos: glam::Vec3::new(  70.0,  0.5, -100.0), vel: glam::Vec3::new(0.0, 0.0, -0.005), color: glam::Vec3::new(1.0, 0.15, 0.05) },
+        Sun { pos: glam::Vec3::new( -65.0,  0.5, -105.0), vel: glam::Vec3::new(0.0, 0.0,  0.007), color: glam::Vec3::new(0.55, 0.05, 0.90) },
+        Sun { pos: glam::Vec3::new(   0.0, -10.0,   1.0), vel: glam::Vec3::new(0.0, 0.0,  0.0),   color: glam::Vec3::new(0.0, 0.0, 0.0) },
     ];
 }
 
@@ -111,23 +110,6 @@ pub extern "C" fn scene_objects(out: &mut SceneDesc) {
         color: [1.0, 1.0, 1.0], emissive: 0.0, no_gravity: 1,
     });
 
-    // Visible sun spheres at the horizon
-    out.push(ObjectDesc {
-        id: 101, model: model("sphere.glb"),
-        pos: [0.0, 1.5, -120.0], scale: 3.0,
-        color: [1.0, 0.60, 0.15], emissive: 0.08, no_gravity: 1,
-    });
-    out.push(ObjectDesc {
-        id: 102, model: model("sphere.glb"),
-        pos: [70.0, 2.0, -100.0], scale: 2.5,
-        color: [0.95, 0.30, 0.04], emissive: 0.08, no_gravity: 1,
-    });
-    out.push(ObjectDesc {
-        id: 103, model: model("sphere.glb"),
-        pos: [-65.0, 2.5, -105.0], scale: 2.5,
-        color: [0.90, 0.35, 0.20], emissive: 0.08, no_gravity: 1,
-    });
-
     // Ball and cube
     out.push(ObjectDesc {
         id: 104, model: model("sphere.glb"),
@@ -183,7 +165,6 @@ fn compute_env_pixels(suns: &[Sun], pixels: &mut [[f32; 3]]) {
         }
     }
 
-    // Paint each sun: hard disk core + soft corona, like a real sun near the horizon.
     for sun in suns {
         let dir = sun.pos.normalize_or_zero();
         let u = (dir.x.atan2(dir.z) + std::f32::consts::PI) / (2.0 * std::f32::consts::PI);
@@ -194,27 +175,17 @@ fn compute_env_pixels(suns: &[Sun], pixels: &mut [[f32; 3]]) {
         let cy = cy_f as i32;
         let sub_x = cx_f - cx as f32;
         let sub_y = cy_f - cy as f32;
-        let disk_r = SUN_RADIUS;          // hard disk radius in pixels
-        let corona_r = disk_r * 4.0;     // corona extends to 4x disk radius
-        let r_i = corona_r as i32 + 1;
+        let r_i = (SUN_RADIUS * 5.0) as i32 + 1;
         for dy in -r_i..=r_i {
             for dx in -r_i..=r_i {
                 let px = ((cx + dx).rem_euclid(W as i32)) as u32;
                 let py = (cy + dy).clamp(0, H as i32 - 1) as u32;
                 let fdx = dx as f32 - sub_x;
                 let fdy = dy as f32 - sub_y;
-                let dist = (fdx * fdx + fdy * fdy).sqrt();
-                // Hard disk core — full intensity inside, smooth AA at edge
-                let disk = (1.0 - ((dist - disk_r) * 2.0).clamp(0.0, 1.0)).max(0.0);
-                // Soft corona falloff outside the disk
-                let corona = if dist > disk_r {
-                    let t = (dist - disk_r) / (corona_r - disk_r);
-                    (1.0 - t).max(0.0).powf(3.0) * 0.4
-                } else {
-                    0.0
-                };
-                let intensity = (disk + corona) * SUN_INTENSITY;
-                if intensity < 0.001 { continue; }
+                let dist2 = (fdx * fdx + fdy * fdy) / (SUN_RADIUS * SUN_RADIUS);
+                // Pure Gaussian — no hard edges, naturally smooth at any resolution
+                let intensity = (-dist2 * 0.5).exp() * SUN_INTENSITY;
+                if intensity < 1.0 { continue; }
                 let idx = (py * W + px) as usize;
                 pixels[idx][0] += sun.color.x * intensity;
                 pixels[idx][1] += sun.color.y * intensity;
