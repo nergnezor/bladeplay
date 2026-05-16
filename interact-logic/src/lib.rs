@@ -19,12 +19,13 @@ pub struct Sun {
     pub mass: f32,
 }
 
-pub fn make_suns() -> [Sun; 3] {
-    [
-        Sun { pos: glam::Vec3::new(-20.0, 30.0, -80.0), vel: glam::Vec3::new(0.6, 0.05, 0.0),   color: glam::Vec3::new(0.6, 0.0, 1.0),  mass: 1.0 },
-        Sun { pos: glam::Vec3::new(  5.0, 45.0, -90.0), vel: glam::Vec3::new(-0.4, -0.03, 0.1), color: glam::Vec3::new(1.0, 0.2, 0.6),  mass: 1.2 },
-        Sun { pos: glam::Vec3::new( 20.0, 25.0, -75.0), vel: glam::Vec3::new(-0.3, 0.04, -0.1), color: glam::Vec3::new(1.0, 0.5, 0.0),  mass: 0.8 },
-    ]
+#[no_mangle]
+pub extern "C" fn make_suns(out: &mut [Sun; 3]) {
+    *out = [
+        Sun { pos: glam::Vec3::new(-15.0, 12.0, -20.0), vel: glam::Vec3::new(0.6, 0.05, 0.0),   color: glam::Vec3::new(0.6, 0.0, 1.0),  mass: 1.0 },
+        Sun { pos: glam::Vec3::new(  3.0, 18.0, -25.0), vel: glam::Vec3::new(-0.4, -0.03, 0.1), color: glam::Vec3::new(1.0, 0.2, 0.6),  mass: 1.2 },
+        Sun { pos: glam::Vec3::new( 15.0, 10.0, -18.0), vel: glam::Vec3::new(-0.3, 0.04, -0.1), color: glam::Vec3::new(1.0, 0.5, 0.0),  mass: 0.8 },
+    ];
 }
 
 #[no_mangle]
@@ -49,13 +50,83 @@ pub extern "C" fn step_suns(suns: &mut [Sun; 3], dt: f32) {
     }
 }
 
-// Hot-reloadable sphere appearance — ändra och spara för att se effekten direkt
-pub const SPHERE_COLOR: [f32; 3] = [0.0, 1.0, 0.4];  // RGB-färg
-pub const SPHERE_EMISSIVE: f32   = 0.0;               // 0 = belyst, >0 = lysande
+// ---------------------------------------------------------------------------
+// Declarative scene — edit and save to hot-reload objects in the running app
+// ---------------------------------------------------------------------------
 
+/// One object in the scene. `id` is its stable identity across reloads.
+#[repr(C)]
+#[derive(Clone, Copy)]
+pub struct ObjectDesc {
+    pub id:       u64,
+    pub model:    [u8; 32],  // glb filename, null-terminated, relative to data/
+    pub pos:      [f32; 3],
+    pub scale:    f32,
+    pub color:    [f32; 3],  // RGB
+    pub emissive: f32,       // 0 = lit, >0 = glowing
+}
+
+impl ObjectDesc {
+    pub fn model_str(&self) -> &str {
+        let end = self.model.iter().position(|&b| b == 0).unwrap_or(32);
+        std::str::from_utf8(&self.model[..end]).unwrap_or("sphere.glb")
+    }
+}
+
+pub fn model(name: &str) -> [u8; 32] {
+    let mut buf = [0u8; 32];
+    let b = name.as_bytes();
+    buf[..b.len().min(31)].copy_from_slice(&b[..b.len().min(31)]);
+    buf
+}
+
+pub const MAX_SCENE_OBJECTS: usize = 64;
+
+#[repr(C)]
+pub struct SceneDesc {
+    pub objects: [ObjectDesc; MAX_SCENE_OBJECTS],
+    pub count:   u32,
+}
+
+impl SceneDesc {
+    pub fn new() -> Self {
+        Self {
+            objects: [ObjectDesc {
+                id: 0, model: model("sphere.glb"),
+                pos: [0.0; 3], scale: 1.0,
+                color: [1.0; 3], emissive: 0.0,
+            }; MAX_SCENE_OBJECTS],
+            count: 0,
+        }
+    }
+    pub fn push(&mut self, obj: ObjectDesc) {
+        if (self.count as usize) < MAX_SCENE_OBJECTS {
+            self.objects[self.count as usize] = obj;
+            self.count += 1;
+        }
+    }
+}
+
+/// Returns the desired scene for this frame.
+/// Edit freely — objects are added/removed live on save.
 #[no_mangle]
-pub extern "C" fn sphere_tint(out: &mut [f32; 4]) {
-    *out = [SPHERE_COLOR[0], SPHERE_COLOR[1], SPHERE_COLOR[2], SPHERE_EMISSIVE];
+pub extern "C" fn scene_objects(out: &mut SceneDesc) {
+    *out = SceneDesc::new();
+    out.push(ObjectDesc {
+        id: 1, model: model("sphere.glb"),
+        pos: [0.0, 5.0, 0.0], scale: 1.0,
+        color: [0.0, 1.0, 0.4], emissive: 0.0,
+    });
+    out.push(ObjectDesc {
+        id: 2, model: model("torus.glb"),
+        pos: [2.0, 4.0, 0.0], scale: 1.0,
+        color: [1.0, 0.3, 0.8], emissive: 0.0,
+    });
+    out.push(ObjectDesc {
+        id: 3, model: model("star.glb"),
+        pos: [-2.0, 6.0, 0.0], scale: 2.0,
+        color: [1.0, 0.9, 0.1], emissive: 0.0,
+    });
 }
 
 pub const ENV_W: u32 = 512;
