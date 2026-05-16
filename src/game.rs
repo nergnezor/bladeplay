@@ -22,7 +22,6 @@ pub struct Game {
     pub window_size: winit::dpi::PhysicalSize<u32>,
     surface_ready: bool,
     frame_count: u32,
-    env_gen: u32,
     logic_src_mtime: time::SystemTime,
     rebuild_process: Option<std::process::Child>,
 }
@@ -79,7 +78,6 @@ impl Game {
             window_size,
             surface_ready: false,
             frame_count: 0,
-            env_gen: 0,
             logic_src_mtime: logic_src_mtime(),
             rebuild_process: None,
         }
@@ -175,17 +173,14 @@ impl Game {
         self.check_hot_reload();
 
         self.frame_count += 1;
-        // Write env map on first few frames then every 30 frames so lighting tracks sun movement
+        // Upload env map directly to GPU every 30 frames so lighting tracks sun movement
         if self.frame_count <= 2 || self.frame_count % 30 == 0 {
-            self.scene.write_env_hdr();
-            // Use a new filename each time to bypass the asset-hub path cache
-            self.env_gen += 1;
-            let new_name = format!("env_suns_{}.hdr", self.env_gen);
-            let _ = std::fs::rename("data/env_suns.hdr", format!("data/{new_name}"));
-            if self.env_gen > 1 {
-                let _ = std::fs::remove_file(format!("data/env_suns_{}.hdr", self.env_gen - 1));
-            }
-            self.engine.set_environment_map(&new_name);
+            let pixels = self.scene.make_env_pixels();
+            self.engine.set_environment_map_hdr_data(
+                interact_logic::ENV_W,
+                interact_logic::ENV_H,
+                &pixels,
+            );
         }
 
         self.engine.update(dt);

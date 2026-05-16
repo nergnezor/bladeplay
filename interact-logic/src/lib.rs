@@ -6,8 +6,8 @@ pub const DRAG_Y: f32 = 0.7;
 const SKY_ZENITH: [f32; 3] = [0.02, 0.02, 0.5];   // color at top of sky
 const SKY_HORIZON: [f32; 3] = [0.25, 0.08, 0.06];  // extra glow at horizon
 const SKY_NADIR: [f32; 3] = [0.12, 0.06, 0.03];    // color at bottom (ground reflection)
-const SUN_INTENSITY: f32 = 2.0;                    // brightness of sun blobs in env-map
-const SUN_RADIUS: i32 = 1;                         // angular size of suns in env-map pixels
+const SUN_INTENSITY: f32 = 20.0;                    // brightness of sun blobs in env-map
+const SUN_RADIUS: i32 = 18;                         // angular size of suns in env-map pixels
 
 const G: f32 = 80.0;
 
@@ -49,12 +49,27 @@ pub extern "C" fn step_suns(suns: &mut [Sun; 3], dt: f32) {
     }
 }
 
+// Hot-reloadable sphere appearance — ändra och spara för att se effekten direkt
+pub const SPHERE_COLOR: [f32; 3] = [0.0, 1.0, 0.4];  // RGB-färg
+pub const SPHERE_EMISSIVE: f32   = 0.0;               // 0 = belyst, >0 = lysande
+
 #[no_mangle]
-pub extern "C" fn write_env_hdr(suns: &[Sun; 3]) {
-    use std::io::Write as _;
-    const W: u32 = 512;
-    const H: u32 = 256;
-    let mut pixels = vec![[0f32; 3]; (W * H) as usize];
+pub extern "C" fn sphere_tint(out: &mut [f32; 4]) {
+    *out = [SPHERE_COLOR[0], SPHERE_COLOR[1], SPHERE_COLOR[2], SPHERE_EMISSIVE];
+}
+
+pub const ENV_W: u32 = 512;
+pub const ENV_H: u32 = 256;
+
+#[no_mangle]
+pub extern "C" fn make_env_pixels(suns: &[Sun; 3], out: *mut [f32; 3]) {
+    let pixels = unsafe { std::slice::from_raw_parts_mut(out, (ENV_W * ENV_H) as usize) };
+    compute_env_pixels(suns, pixels);
+}
+
+fn compute_env_pixels(suns: &[Sun; 3], pixels: &mut [[f32; 3]]) {
+    const W: u32 = ENV_W;
+    const H: u32 = ENV_H;
 
     // Sky gradient: zenith → horizon → nadir
     for y in 0..H {
@@ -71,7 +86,6 @@ pub extern "C" fn write_env_hdr(suns: &[Sun; 3]) {
     // Paint each sun as a bright gaussian blob
     for sun in suns {
         let dir = sun.pos.normalize_or_zero();
-        // equirectangular: u from yaw, v from elevation
         let u = (dir.x.atan2(dir.z) + std::f32::consts::PI) / (2.0 * std::f32::consts::PI);
         let v = (0.5 - dir.y.clamp(-1.0, 1.0).asin() / std::f32::consts::PI).clamp(0.0, 1.0);
         let cx = (u * W as f32) as i32;
@@ -91,6 +105,15 @@ pub extern "C" fn write_env_hdr(suns: &[Sun; 3]) {
             }
         }
     }
+}
+
+#[no_mangle]
+pub extern "C" fn write_env_hdr(suns: &[Sun; 3]) {
+    use std::io::Write as _;
+    const W: u32 = ENV_W;
+    const H: u32 = ENV_H;
+    let mut pixels = vec![[0f32; 3]; (W * H) as usize];
+    compute_env_pixels(suns, &mut pixels);
 
     let mut data = Vec::new();
     write!(data, "#?RADIANCE\nFORMAT=32-bit_rle_rgbe\n\n-Y {} +X {}\n", H, W).unwrap();

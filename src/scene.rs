@@ -6,6 +6,7 @@ pub struct Scene {
     pub _ground: blade_engine::ObjectHandle,
     pub ball: blade_engine::ObjectHandle,
     pub cube: blade_engine::ObjectHandle,
+    pub sphere: blade_engine::ObjectHandle,
     pub sun_spheres: [blade_engine::ObjectHandle; 3],
     pub ball_pos: glam::Vec3,
     pub cube_pos: glam::Vec3,
@@ -80,6 +81,23 @@ impl Scene {
             blade_engine::DynamicInput::SetPosition,
         );
 
+        let sphere = engine.add_object(
+            &blade_engine::config::Object {
+                name: "sphere".to_string(),
+                visuals: vec![blade_engine::config::Visual {
+                    model: "sphere.glb".to_string(),
+                    ..Default::default()
+                }],
+                colliders: vec![],
+                additional_mass: None,
+            },
+            blade_engine::Transform {
+                position: glam::Vec3::new(0.0, BALL_Y, 0.0).into(),
+                orientation: glam::Quat::IDENTITY.into(),
+            },
+            blade_engine::DynamicInput::Empty,
+        );
+
         let sun_colors = [
             glam::Vec3::new(0.6, 0.0, 1.0),
             glam::Vec3::new(1.0, 0.2, 0.6),
@@ -108,12 +126,12 @@ impl Scene {
             s
         });
 
-        let scene = Self { _ground, ball, cube, sun_spheres, ball_pos, cube_pos, suns };
+        let scene = Self { _ground, ball, cube, sphere, sun_spheres, ball_pos, cube_pos, suns };
         (engine, scene)
     }
 
-    pub fn write_env_hdr(&self) {
-        crate::hot_logic::write_env_hdr(&self.suns);
+    pub fn make_env_pixels(&self) -> Vec<[f32; 3]> {
+        crate::hot_logic::make_env_pixels(&self.suns)
     }
 
     pub fn step_suns(&mut self, dt: f32) {
@@ -121,6 +139,7 @@ impl Scene {
     }
 
     pub fn sync_to_engine(&self, engine: &mut blade_engine::Engine) {
+        engine.set_color_tint(self.sphere, crate::hot_logic::sphere_tint());
         engine.teleport_object(
             self.ball,
             blade_engine::Transform {

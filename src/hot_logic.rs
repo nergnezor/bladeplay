@@ -3,12 +3,14 @@ use std::sync::Mutex;
 use std::time::SystemTime;
 
 type StepSunsFn = unsafe extern "C" fn(&mut [Sun; 3], f32);
-type WriteEnvHdrFn = unsafe extern "C" fn(&[Sun; 3]);
+type MakeEnvPixelsFn = unsafe extern "C" fn(&[Sun; 3], *mut [f32; 3]);
+type SphereTintFn = unsafe extern "C" fn(&mut [f32; 4]);
 
 struct Loaded {
     _lib: libloading::Library,
     step_suns: StepSunsFn,
-    write_env_hdr: WriteEnvHdrFn,
+    make_env_pixels: MakeEnvPixelsFn,
+    sphere_tint: SphereTintFn,
     mtime: SystemTime,
     counter: u64,
 }
@@ -59,24 +61,34 @@ pub fn try_reload() {
                 return;
             }
         };
-        let write_env_hdr_sym: libloading::Symbol<WriteEnvHdrFn> = match lib.get(b"write_env_hdr") {
+        let make_env_pixels_sym: libloading::Symbol<MakeEnvPixelsFn> = match lib.get(b"make_env_pixels") {
             Ok(s) => s,
             Err(e) => {
-                eprintln!("[hot_logic] write_env_hdr symbol: {e}");
+                eprintln!("[hot_logic] make_env_pixels symbol: {e}");
+                return;
+            }
+        };
+        let sphere_tint_sym: libloading::Symbol<SphereTintFn> = match lib.get(b"sphere_tint") {
+            Ok(s) => s,
+            Err(e) => {
+                eprintln!("[hot_logic] sphere_tint symbol: {e}");
                 return;
             }
         };
         let step_suns = *step_suns_sym;
-        let write_env_hdr = *write_env_hdr_sym;
+        let make_env_pixels = *make_env_pixels_sym;
+        let sphere_tint = *sphere_tint_sym;
         drop(step_suns_sym);
-        drop(write_env_hdr_sym);
+        drop(make_env_pixels_sym);
+        drop(sphere_tint_sym);
 
         let mut g = LOADED.lock().unwrap();
         let prev_counter = g.as_ref().map(|l| l.counter);
         *g = Some(Loaded {
             _lib: lib,
             step_suns,
-            write_env_hdr,
+            make_env_pixels,
+            sphere_tint,
             mtime,
             counter,
         });
@@ -99,11 +111,26 @@ pub fn step_suns(suns: &mut [Sun; 3], dt: f32) {
     }
 }
 
-pub fn write_env_hdr(suns: &[Sun; 3]) {
+pub fn make_env_pixels(suns: &[Sun; 3]) -> Vec<[f32; 3]> {
+    const W: u32 = interact_logic::ENV_W;
+    const H: u32 = interact_logic::ENV_H;
+    let mut pixels = vec![[0f32; 3]; (W * H) as usize];
     let g = LOADED.lock().unwrap();
     if let Some(l) = g.as_ref() {
-        unsafe { (l.write_env_hdr)(suns) };
+        unsafe { (l.make_env_pixels)(suns, pixels.as_mut_ptr()) };
     } else {
-        interact_logic::write_env_hdr(suns);
+        interact_logic::make_env_pixels(suns, pixels.as_mut_ptr());
     }
+    pixels
+}
+
+pub fn sphere_tint() -> [f32; 4] {
+    let mut out = [0f32; 4];
+    let g = LOADED.lock().unwrap();
+    if let Some(l) = g.as_ref() {
+        unsafe { (l.sphere_tint)(&mut out) };
+    } else {
+        interact_logic::sphere_tint(&mut out);
+    }
+    out
 }
