@@ -1,39 +1,36 @@
-pub const BALL_Y: f32 = 0.5;
-pub const CUBE_Y: f32 = 0.5;
-pub const DRAG_Y: f32 = 0.7;
-
 // --- Tweakable sky/sun constants (hot-reload by saving this file) ---
-const SKY_ZENITH: [f32; 3] = [0.02, 0.02, 0.5];   // color at top of sky
-const SKY_HORIZON: [f32; 3] = [0.25, 0.08, 0.06];  // extra glow at horizon
-const SKY_NADIR: [f32; 3] = [0.12, 0.06, 0.03];    // color at bottom (ground reflection)
-const SUN_INTENSITY: f32 = 20.0;                    // brightness of sun blobs in env-map
-const SUN_RADIUS: i32 = 3;                          // angular size of suns in env-map pixels
-
-const G: f32 = 80.0;
+const SKY_ZENITH: [f32; 3] = [0.20, 0.16, 0.35];
+const SKY_HORIZON: [f32; 3] = [0.15, 0.09, 0.12];
+const SKY_NADIR: [f32; 3] = [0.05, 0.03, 0.04];
+const SUN_INTENSITY: f32 = 20_000.0;
+const SUN_RADIUS: i32 = 14;
 
 #[derive(Clone)]
 pub struct Sun {
     pub pos: glam::Vec3,
-    pub vel: glam::Vec3,
+    pub vel: glam::Vec3,  // vel.z = angular speed (rad/s) for circular orbit
     pub color: glam::Vec3,
-    pub mass: f32,
 }
 
-// Orbital center — suns circle around this point, always in front of camera
-const ORBIT_CENTER: glam::Vec3 = glam::Vec3::new(0.0, 0.0, -20.0);
+// Suns orbit around the scene center so colored light hits front and top faces
+const ORBIT_CENTER: glam::Vec3 = glam::Vec3::new(0.0, 5.0, 0.0);
 
 #[no_mangle]
-pub extern "C" fn make_suns(out: &mut [Sun; 3]) {
-    // vel.z stores angular speed (rad/s); pos is on the orbital circle
+pub extern "C" fn make_suns(out: &mut [Sun; 4]) {
+    // vel.z = angular speed (rad/s) in xz-plane around ORBIT_CENTER.
+    // Suns at positive z light the front faces (+z normals) visible to the camera.
     *out = [
-        Sun { pos: glam::Vec3::new(-10.0, 8.0, -20.0), vel: glam::Vec3::new(0.0, 0.0,  0.18), color: glam::Vec3::new(0.6, 0.0, 1.0), mass: 1.0 },
-        Sun { pos: glam::Vec3::new(  6.0, 12.0, -14.0), vel: glam::Vec3::new(0.0, 0.0, -0.13), color: glam::Vec3::new(1.0, 0.2, 0.6), mass: 1.0 },
-        Sun { pos: glam::Vec3::new(  9.0,  6.0, -22.0), vel: glam::Vec3::new(0.0, 0.0,  0.10), color: glam::Vec3::new(1.0, 0.5, 0.0), mass: 1.0 },
+        // Suns placed at 30–60° elevation so the env-map importance sampler
+        // (which weights pixels by solid angle ∝ cos(elevation)) picks them up.
+        Sun { pos: glam::Vec3::new(-20.0, 15.0, 20.0), vel: glam::Vec3::new(0.0, 0.0,  0.15), color: glam::Vec3::new(0.4, 0.1, 1.0) },
+        Sun { pos: glam::Vec3::new(  0.0, 20.0, 15.0), vel: glam::Vec3::new(0.0, 0.0, -0.10), color: glam::Vec3::new(1.0, 0.2, 0.5) },
+        Sun { pos: glam::Vec3::new( 20.0, 15.0, 20.0), vel: glam::Vec3::new(0.0, 0.0,  0.12), color: glam::Vec3::new(1.0, 0.6, 0.0) },
+        Sun { pos: glam::Vec3::new( -5.0, 25.0, -15.0), vel: glam::Vec3::new(0.0, 0.0,  0.05), color: glam::Vec3::new(0.9, 1.0, 1.0) },
     ];
 }
 
 #[no_mangle]
-pub extern "C" fn step_suns(suns: &mut [Sun; 3], dt: f32) {
+pub extern "C" fn step_suns(suns: &mut [Sun; 4], dt: f32) {
     for sun in suns.iter_mut() {
         let rel = sun.pos - ORBIT_CENTER;
         let r = (rel.x * rel.x + rel.z * rel.z).sqrt().max(0.1);
@@ -118,7 +115,7 @@ pub extern "C" fn scene_objects(out: &mut SceneDesc) {
         color: [1.0, 1.0, 1.0], emissive: 0.0, no_gravity: 1,
     });
 
-    // Suns are pure light sources — rendered only in the env-map (no mesh objects)
+    // Suns are env-map light sources only — no sphere meshes
 
     // Ball and cube
     out.push(ObjectDesc {
@@ -154,12 +151,12 @@ pub const ENV_W: u32 = 512;
 pub const ENV_H: u32 = 256;
 
 #[no_mangle]
-pub extern "C" fn make_env_pixels(suns: &[Sun; 3], out: *mut [f32; 3]) {
+pub extern "C" fn make_env_pixels(suns: &[Sun; 4], out: *mut [f32; 3]) {
     let pixels = unsafe { std::slice::from_raw_parts_mut(out, (ENV_W * ENV_H) as usize) };
     compute_env_pixels(suns, pixels);
 }
 
-fn compute_env_pixels(suns: &[Sun; 3], pixels: &mut [[f32; 3]]) {
+fn compute_env_pixels(suns: &[Sun], pixels: &mut [[f32; 3]]) {
     const W: u32 = ENV_W;
     const H: u32 = ENV_H;
 

@@ -19,7 +19,6 @@ pub struct Game {
     mouse_pos: glam::Vec2,
     pub window_size: winit::dpi::PhysicalSize<u32>,
     surface_ready: bool,
-    frame_count: u32,
     logic_src_mtime: time::SystemTime,
     rebuild_process: Option<std::process::Child>,
 }
@@ -68,7 +67,6 @@ impl Game {
             mouse_pos: glam::Vec2::ZERO,
             window_size,
             surface_ready: false,
-            frame_count: 0,
             logic_src_mtime: logic_src_mtime(),
             rebuild_process: None,
         }
@@ -171,7 +169,6 @@ impl Game {
 
         self.check_hot_reload();
 
-        self.frame_count += 1;
         {
             let pixels = self.scene.make_env_pixels();
             self.engine.set_environment_map_hdr_data(

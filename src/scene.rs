@@ -1,7 +1,7 @@
 use std::collections::HashMap;
 use std::path::PathBuf;
 
-pub use interact_logic::{BALL_Y, CUBE_Y, DRAG_Y, Sun};
+pub use interact_logic::Sun;
 use interact_logic::ObjectDesc;
 
 const GRAVITY: f32 = -9.8;
@@ -18,7 +18,7 @@ struct DynPhysics {
 }
 
 pub struct Scene {
-    pub suns: [Sun; 3],
+    pub suns: [Sun; 4],
     dynamic: HashMap<u64, DynPhysics>,
 }
 
@@ -27,7 +27,7 @@ impl Scene {
         let data_path = PathBuf::from("data");
         let mut suns = std::array::from_fn(|_| Sun {
             pos: glam::Vec3::ZERO, vel: glam::Vec3::ZERO,
-            color: glam::Vec3::ONE, mass: 1.0,
+            color: glam::Vec3::ONE,
         });
         interact_logic::make_suns(&mut suns);
 
@@ -45,10 +45,6 @@ impl Scene {
 
         let scene = Self { suns, dynamic: HashMap::new() };
         (engine, scene)
-    }
-
-    pub fn handle_for(&self, id: u64) -> Option<blade_engine::ObjectHandle> {
-        self.dynamic.get(&id).map(|p| p.handle)
     }
 
     pub fn reset_suns(&mut self) {
@@ -176,11 +172,4 @@ impl Scene {
         }
     }
 
-    /// Teleport a no_gravity object (e.g. sun spheres) to a new position.
-    pub fn set_pos(&mut self, id: u64, pos: glam::Vec3) {
-        if let Some(phys) = self.dynamic.get_mut(&id) {
-            phys.pos = pos;
-            phys.spawn_pos = pos;
-        }
-    }
 }

@@ -2,10 +2,10 @@ use interact_logic::{Sun, SceneDesc};
 use std::sync::Mutex;
 use std::time::SystemTime;
 
-type StepSunsFn      = unsafe extern "C" fn(&mut [Sun; 3], f32);
-type MakeEnvPixelsFn = unsafe extern "C" fn(&[Sun; 3], *mut [f32; 3]);
+type StepSunsFn      = unsafe extern "C" fn(&mut [Sun; 4], f32);
+type MakeEnvPixelsFn = unsafe extern "C" fn(&[Sun; 4], *mut [f32; 3]);
 type SceneObjectsFn  = unsafe extern "C" fn(&mut SceneDesc);
-type MakeSunsFn      = unsafe extern "C" fn(&mut [Sun; 3]);
+type MakeSunsFn      = unsafe extern "C" fn(&mut [Sun; 4]);
 
 struct Loaded {
     _lib: libloading::Library,
@@ -80,13 +80,13 @@ pub fn try_reload() {
     }
 }
 
-pub fn step_suns(suns: &mut [Sun; 3], dt: f32) {
+pub fn step_suns(suns: &mut [Sun; 4], dt: f32) {
     let g = LOADED.lock().unwrap();
     if let Some(l) = g.as_ref() { unsafe { (l.step_suns)(suns, dt) }; }
     else { interact_logic::step_suns(suns, dt); }
 }
 
-pub fn make_env_pixels(suns: &[Sun; 3]) -> Vec<[f32; 3]> {
+pub fn make_env_pixels(suns: &[Sun; 4]) -> Vec<[f32; 3]> {
     const W: u32 = interact_logic::ENV_W;
     const H: u32 = interact_logic::ENV_H;
     let mut pixels = vec![[0f32; 3]; (W * H) as usize];
@@ -104,7 +104,7 @@ pub fn scene_objects() -> SceneDesc {
     out
 }
 
-pub fn make_suns(out: &mut [Sun; 3]) {
+pub fn make_suns(out: &mut [Sun; 4]) {
     let g = LOADED.lock().unwrap();
     if let Some(l) = g.as_ref() { unsafe { (l.make_suns)(out) }; }
     else { interact_logic::make_suns(out); }
