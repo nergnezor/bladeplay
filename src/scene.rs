@@ -444,11 +444,11 @@ impl Scene {
             .map(|(id, y, _)| (id, y))
     }
 
-    pub fn start_drag(&mut self, id: u64) -> Option<f32> {
+    pub fn start_drag(&mut self, id: u64) -> Option<(f32, f32)> {
         let phys = self.dynamic.get_mut(&id)?;
         phys.dragged = true;
         phys.vel = glam::Vec3::ZERO;
-        Some(phys.pos.y)
+        Some((phys.pos.y, phys.pos.z))  // (y, z) — caller uses z for depth plane
     }
 
     pub fn drag_to(&mut self, id: u64, target: glam::Vec3, dt: f32) {

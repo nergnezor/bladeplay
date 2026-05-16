@@ -1,9 +1,9 @@
 // --- Tweakable sky/sun constants (hot-reload by saving this file) ---
-const SKY_ZENITH: [f32; 3] = [1.2, 0.9, 1.8];
-const SKY_HORIZON: [f32; 3] = [0.6, 0.4, 0.8];
-const SKY_NADIR: [f32; 3] = [0.15, 0.10, 0.12];
-const SUN_INTENSITY: f32 = 2000000.0;
-const SUN_RADIUS: f32 = 0.3;
+const SKY_ZENITH: [f32; 3] = [0.08, 0.12, 0.40];   // deep blue
+const SKY_HORIZON: [f32; 3] = [0.55, 0.18, 0.04];  // dark burnt orange
+const SKY_NADIR: [f32; 3] = [0.03, 0.01, 0.01];
+const SUN_INTENSITY: f32 = 5000.0;
+const SUN_RADIUS: f32 = 8.0;
 
 #[derive(Clone)]
 pub struct Sun {
@@ -12,20 +12,19 @@ pub struct Sun {
     pub color: glam::Vec3,
 }
 
-// Suns orbit around the scene center so colored light hits front and top faces
-const ORBIT_CENTER: glam::Vec3 = glam::Vec3::new(0.0, 5.0, -1000.0);
+const ORBIT_CENTER: glam::Vec3 = glam::Vec3::new(0.0, 0.0, 0.0);
 
 #[no_mangle]
 pub extern "C" fn make_suns(out: &mut [Sun; 4]) {
-    // vel.z = angular speed (rad/s) in xz-plane around ORBIT_CENTER.
-    // Suns at positive z light the front faces (+z normals) visible to the camera.
     *out = [
-        // Four suns spread evenly around the scene at ~45° elevation.
-        // Positioned at similar distances so they contribute equally.
-        Sun { pos: glam::Vec3::new(-22.0, 22.0,  22.0), vel: glam::Vec3::new(0.0, 0.0,  0.12), color: glam::Vec3::new(0.4, 0.1, 1.0) },
-        Sun { pos: glam::Vec3::new( 22.0, 22.0,  22.0), vel: glam::Vec3::new(0.0, 0.0, -0.09), color: glam::Vec3::new(1.0, 0.6, 0.0) },
-        Sun { pos: glam::Vec3::new( 22.0, 22.0, -22.0), vel: glam::Vec3::new(0.0, 0.0,  0.10), color: glam::Vec3::new(1.0, 0.2, 0.5) },
-        Sun { pos: glam::Vec3::new(-22.0, 22.0, -22.0), vel: glam::Vec3::new(0.0, 0.0, -0.07), color: glam::Vec3::new(0.8, 1.0, 1.0) },
+        // Huvudsol — rakt framåt (kameran tittar mot -z)
+        Sun { pos: glam::Vec3::new(  0.0,  2.0, -80.0), vel: glam::Vec3::new(0.0, 0.0, 0.0), color: glam::Vec3::new(1.0, 0.55, 0.10) },
+        // Andra sol — höger
+        Sun { pos: glam::Vec3::new( 50.0,  3.0, -65.0), vel: glam::Vec3::new(0.0, 0.0, 0.0), color: glam::Vec3::new(0.9, 0.28, 0.02) },
+        // Tredje sol — vänster
+        Sun { pos: glam::Vec3::new(-45.0,  4.0, -70.0), vel: glam::Vec3::new(0.0, 0.0, 0.0), color: glam::Vec3::new(0.85, 0.32, 0.18) },
+        // Fjärde — inaktiv
+        Sun { pos: glam::Vec3::new(  0.0, -10.0,  1.0), vel: glam::Vec3::new(0.0, 0.0, 0.0), color: glam::Vec3::new(0.0, 0.0, 0.0) },
     ];
 }
 
@@ -37,7 +36,6 @@ pub extern "C" fn step_suns(suns: &mut [Sun; 4], dt: f32) {
         let angle = rel.z.atan2(rel.x) + sun.vel.z * dt;
         sun.pos.x = ORBIT_CENTER.x + r * angle.cos();
         sun.pos.z = ORBIT_CENTER.z + r * angle.sin();
-		// return;
     }
 }
 
@@ -116,7 +114,22 @@ pub extern "C" fn scene_objects(out: &mut SceneDesc) {
         color: [1.0, 1.0, 1.0], emissive: 0.0, no_gravity: 1,
     });
 
-    // Suns are env-map light sources only — no sphere meshes
+    // Visible sun spheres far away at the horizon
+    out.push(ObjectDesc {
+        id: 101, model: model("sphere.glb"),
+        pos: [0.0, 2.0, -80.0], scale: 8.0,
+        color: [1.0, 0.55, 0.10], emissive: 0.3, no_gravity: 1,
+    });
+    out.push(ObjectDesc {
+        id: 102, model: model("sphere.glb"),
+        pos: [50.0, 3.0, -65.0], scale: 7.0,
+        color: [0.9, 0.28, 0.02], emissive: 0.3, no_gravity: 1,
+    });
+    out.push(ObjectDesc {
+        id: 103, model: model("sphere.glb"),
+        pos: [-45.0, 4.0, -70.0], scale: 7.0,
+        color: [0.85, 0.32, 0.18], emissive: 0.3, no_gravity: 1,
+    });
 
     // Ball and cube
     out.push(ObjectDesc {
@@ -173,7 +186,7 @@ fn compute_env_pixels(suns: &[Sun], pixels: &mut [[f32; 3]]) {
         }
     }
 
-    // Paint each sun as a bright gaussian blob (sub-pixel accurate to avoid stepping)
+    // Paint each sun: hard disk core + soft corona, like a real sun near the horizon.
     for sun in suns {
         let dir = sun.pos.normalize_or_zero();
         let u = (dir.x.atan2(dir.z) + std::f32::consts::PI) / (2.0 * std::f32::consts::PI);
@@ -182,19 +195,29 @@ fn compute_env_pixels(suns: &[Sun], pixels: &mut [[f32; 3]]) {
         let cy_f = v * H as f32;
         let cx = cx_f as i32;
         let cy = cy_f as i32;
-        let sub_x = cx_f - cx as f32;  // fractional offset within pixel
+        let sub_x = cx_f - cx as f32;
         let sub_y = cy_f - cy as f32;
-        let radius = SUN_RADIUS as f32;
-        let r_i = (SUN_RADIUS * 4.0) as i32;
+        let disk_r = SUN_RADIUS;          // hard disk radius in pixels
+        let corona_r = disk_r * 4.0;     // corona extends to 4x disk radius
+        let r_i = corona_r as i32 + 1;
         for dy in -r_i..=r_i {
             for dx in -r_i..=r_i {
                 let px = ((cx + dx).rem_euclid(W as i32)) as u32;
                 let py = (cy + dy).clamp(0, H as i32 - 1) as u32;
                 let fdx = dx as f32 - sub_x;
                 let fdy = dy as f32 - sub_y;
-                let dist = (fdx * fdx + fdy * fdy).sqrt() / radius;
-                let falloff = (-dist * dist * 0.5).exp();
-                let intensity = falloff * SUN_INTENSITY;
+                let dist = (fdx * fdx + fdy * fdy).sqrt();
+                // Hard disk core — full intensity inside, smooth AA at edge
+                let disk = (1.0 - ((dist - disk_r) * 2.0).clamp(0.0, 1.0)).max(0.0);
+                // Soft corona falloff outside the disk
+                let corona = if dist > disk_r {
+                    let t = (dist - disk_r) / (corona_r - disk_r);
+                    (1.0 - t).max(0.0).powf(3.0) * 0.4
+                } else {
+                    0.0
+                };
+                let intensity = (disk + corona) * SUN_INTENSITY;
+                if intensity < 0.001 { continue; }
                 let idx = (py * W + px) as usize;
                 pixels[idx][0] += sun.color.x * intensity;
                 pixels[idx][1] += sun.color.y * intensity;

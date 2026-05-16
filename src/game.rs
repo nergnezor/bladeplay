@@ -14,7 +14,7 @@ pub struct Game {
     egui_state: egui_winit::State,
     egui_viewport_id: egui::ViewportId,
     dragging_dyn: Option<u64>,
-    drag_y: f32,
+    drag_z: f32,
     drag_offset: glam::Vec3,
     mouse_pos: glam::Vec2,
     pub window_size: winit::dpi::PhysicalSize<u32>,
@@ -62,7 +62,7 @@ impl Game {
             last_update: time::Instant::now(),
             egui_state, egui_viewport_id,
             dragging_dyn: None,
-            drag_y: 2.0,
+            drag_z: 0.0,
             drag_offset: glam::Vec3::ZERO,
             mouse_pos: glam::Vec2::ZERO,
             window_size,
@@ -97,9 +97,9 @@ impl Game {
                 if let Some(id) = self.dragging_dyn {
                     let (origin, dir) =
                         picking::screen_ray(&self.camera, self.window_size, self.mouse_pos);
-                    if let Some(hit) = picking::ray_plane_hit(origin, dir, self.drag_y) {
+                    if let Some(hit) = picking::ray_z_plane_hit(origin, dir, self.drag_z) {
                         let target = hit + self.drag_offset;
-                        self.scene.drag_to(id, glam::Vec3::new(target.x, self.drag_y, target.z), delta);
+                        self.scene.drag_to(id, glam::Vec3::new(target.x, target.y, self.drag_z), delta);
                     }
                 }
             }
@@ -124,7 +124,7 @@ impl Game {
                         winit::event::MouseScrollDelta::LineDelta(_, y) => y,
                         winit::event::MouseScrollDelta::PixelDelta(p) => p.y as f32 * 0.01,
                     };
-                    self.drag_y = (self.drag_y + scroll * 0.3).max(0.2);
+                    self.drag_z -= scroll * 0.5;
                 } else {
                     self.camera.on_wheel(delta);
                 }
@@ -137,11 +137,12 @@ impl Game {
                 winit::event::ElementState::Pressed => {
                     let (origin, dir) =
                         picking::screen_ray(&self.camera, self.window_size, self.mouse_pos);
-                    if let Some((id, y)) = self.scene.pick_dynamic_ray(origin, dir, picking::PICK_RADIUS) {
-                        self.drag_y = y;
-                        self.drag_offset = glam::Vec3::ZERO;
-                        self.scene.start_drag(id);
-                        self.dragging_dyn = Some(id);
+                    if let Some((id, _y)) = self.scene.pick_dynamic_ray(origin, dir, picking::PICK_RADIUS) {
+                        if let Some((_y, drag_z)) = self.scene.start_drag(id) {
+                            self.drag_z = drag_z;
+                            self.drag_offset = glam::Vec3::ZERO;
+                            self.dragging_dyn = Some(id);
+                        }
                     }
                 }
                 winit::event::ElementState::Released => {

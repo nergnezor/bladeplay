@@ -29,3 +29,11 @@ pub fn ray_plane_hit(origin: glam::Vec3, dir: glam::Vec3, y: f32) -> Option<glam
     if t < 0.0 { return None; }
     Some(origin + dir * t)
 }
+
+// Intersect ray with vertical plane at constant z, returning world-space hit.
+pub fn ray_z_plane_hit(origin: glam::Vec3, dir: glam::Vec3, z: f32) -> Option<glam::Vec3> {
+    if dir.z.abs() < 1e-6 { return None; }
+    let t = (z - origin.z) / dir.z;
+    if t < 0.0 { return None; }
+    Some(origin + dir * t)
+}
