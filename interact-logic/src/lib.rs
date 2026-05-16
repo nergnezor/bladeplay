@@ -2,8 +2,8 @@
 const SKY_ZENITH: [f32; 3] = [0.08, 0.12, 0.40];   // deep blue
 const SKY_HORIZON: [f32; 3] = [0.55, 0.18, 0.04];  // dark burnt orange
 const SKY_NADIR: [f32; 3] = [0.03, 0.01, 0.01];
-const SUN_INTENSITY: f32 = 5000.0;
-const SUN_RADIUS: f32 = 8.0;
+const SUN_INTENSITY: f32 = 10000000.0;
+const SUN_RADIUS: f32 = 0.001;
 
 #[derive(Clone)]
 pub struct Sun {
@@ -17,12 +17,9 @@ const ORBIT_CENTER: glam::Vec3 = glam::Vec3::new(0.0, 0.0, 0.0);
 #[no_mangle]
 pub extern "C" fn make_suns(out: &mut [Sun; 4]) {
     *out = [
-        // Huvudsol — rakt framåt (kameran tittar mot -z)
-        Sun { pos: glam::Vec3::new(  0.0,  2.0, -80.0), vel: glam::Vec3::new(0.0, 0.0, 0.0), color: glam::Vec3::new(1.0, 0.55, 0.10) },
-        // Andra sol — höger
-        Sun { pos: glam::Vec3::new( 50.0,  3.0, -65.0), vel: glam::Vec3::new(0.0, 0.0, 0.0), color: glam::Vec3::new(0.9, 0.28, 0.02) },
-        // Tredje sol — vänster
-        Sun { pos: glam::Vec3::new(-45.0,  4.0, -70.0), vel: glam::Vec3::new(0.0, 0.0, 0.0), color: glam::Vec3::new(0.85, 0.32, 0.18) },
+        Sun { pos: glam::Vec3::new(   0.0,  1.5, -120.0), vel: glam::Vec3::new(0.0, 0.0, 0.0), color: glam::Vec3::new(1.0, 0.60, 0.15) },
+        Sun { pos: glam::Vec3::new(  70.0,  2.0, -100.0), vel: glam::Vec3::new(0.0, 0.0, 0.0), color: glam::Vec3::new(0.95, 0.30, 0.04) },
+        Sun { pos: glam::Vec3::new( -65.0,  2.5, -105.0), vel: glam::Vec3::new(0.0, 0.0, 0.0), color: glam::Vec3::new(0.90, 0.35, 0.20) },
         // Fjärde — inaktiv
         Sun { pos: glam::Vec3::new(  0.0, -10.0,  1.0), vel: glam::Vec3::new(0.0, 0.0, 0.0), color: glam::Vec3::new(0.0, 0.0, 0.0) },
     ];
@@ -114,21 +111,21 @@ pub extern "C" fn scene_objects(out: &mut SceneDesc) {
         color: [1.0, 1.0, 1.0], emissive: 0.0, no_gravity: 1,
     });
 
-    // Visible sun spheres far away at the horizon
+    // Visible sun spheres at the horizon
     out.push(ObjectDesc {
         id: 101, model: model("sphere.glb"),
-        pos: [0.0, 2.0, -80.0], scale: 8.0,
-        color: [1.0, 0.55, 0.10], emissive: 0.3, no_gravity: 1,
+        pos: [0.0, 1.5, -120.0], scale: 3.0,
+        color: [1.0, 0.60, 0.15], emissive: 0.08, no_gravity: 1,
     });
     out.push(ObjectDesc {
         id: 102, model: model("sphere.glb"),
-        pos: [50.0, 3.0, -65.0], scale: 7.0,
-        color: [0.9, 0.28, 0.02], emissive: 0.3, no_gravity: 1,
+        pos: [70.0, 2.0, -100.0], scale: 2.5,
+        color: [0.95, 0.30, 0.04], emissive: 0.08, no_gravity: 1,
     });
     out.push(ObjectDesc {
         id: 103, model: model("sphere.glb"),
-        pos: [-45.0, 4.0, -70.0], scale: 7.0,
-        color: [0.85, 0.32, 0.18], emissive: 0.3, no_gravity: 1,
+        pos: [-65.0, 2.5, -105.0], scale: 2.5,
+        color: [0.90, 0.35, 0.20], emissive: 0.08, no_gravity: 1,
     });
 
     // Ball and cube
