@@ -2,8 +2,8 @@
 const SKY_ZENITH: [f32; 3] = [0.10, 0.15, 0.45];
 const SKY_HORIZON: [f32; 3] = [0.80, 0.30, 0.05];
 const SKY_NADIR: [f32; 3] = [0.05, 0.02, 0.01];
-const SUN_INTENSITY: f32 = 200000000.0;
-const SUN_RADIUS: f32 = 0.18;
+const SUN_INTENSITY: f32 = 2000.0;
+const SUN_RADIUS: f32 = 0.5;
 
 #[derive(Clone)]
 pub struct Sun {
@@ -140,8 +140,8 @@ pub extern "C" fn scene_objects(out: &mut SceneDesc) {
     });
 }
 
-pub const ENV_W: u32 = 512;
-pub const ENV_H: u32 = 256;
+pub const ENV_W: u32 = 1024;
+pub const ENV_H: u32 = 512;
 
 #[no_mangle]
 pub extern "C" fn make_env_pixels(suns: &[Sun; 4], out: *mut [f32; 3]) {
@@ -165,6 +165,15 @@ fn compute_env_pixels(suns: &[Sun], pixels: &mut [[f32; 3]]) {
         }
     }
 
+    // Single pass per sun: Rayleigh + Mie + disk blended together, iterated over
+    // a circle so no square boundary artefacts appear at any intensity level.
+    const RAYLEIGH_RADIUS: f32 = 18.0;
+    const RAYLEIGH_INTENSITY: f32 = 80.0;
+    const MIE_RADIUS: f32 = 5.0;
+    const MIE_INTENSITY: f32 = 3000.0;
+    // Outer radius to iterate — driven by Rayleigh which is the widest term
+    const ITER_RADIUS: f32 = RAYLEIGH_RADIUS * 2.5;
+
     for sun in suns {
         let dir = sun.pos.normalize_or_zero();
         let u = (dir.x.atan2(dir.z) + std::f32::consts::PI) / (2.0 * std::f32::consts::PI);
@@ -175,21 +184,33 @@ fn compute_env_pixels(suns: &[Sun], pixels: &mut [[f32; 3]]) {
         let cy = cy_f as i32;
         let sub_x = cx_f - cx as f32;
         let sub_y = cy_f - cy as f32;
-        let r_i = (SUN_RADIUS * 5.0) as i32 + 1;
+
+        let r_i = ITER_RADIUS as i32 + 1;
         for dy in -r_i..=r_i {
             for dx in -r_i..=r_i {
-                let px = ((cx + dx).rem_euclid(W as i32)) as u32;
-                let py = (cy + dy).clamp(0, H as i32 - 1) as u32;
                 let fdx = dx as f32 - sub_x;
                 let fdy = dy as f32 - sub_y;
-                let dist2 = (fdx * fdx + fdy * fdy) / (SUN_RADIUS * SUN_RADIUS);
-                // Pure Gaussian — no hard edges, naturally smooth at any resolution
-                let intensity = (-dist2 * 0.5).exp() * SUN_INTENSITY;
-                if intensity < 1.0 { continue; }
+                let dist2_px = fdx * fdx + fdy * fdy;
+                // Hard circular clip — no square edges at any level
+                if dist2_px > ITER_RADIUS * ITER_RADIUS { continue; }
+
+                let rayleigh = (-dist2_px / (2.0 * RAYLEIGH_RADIUS * RAYLEIGH_RADIUS)).exp() * RAYLEIGH_INTENSITY;
+                let mie      = (-dist2_px / (2.0 * MIE_RADIUS      * MIE_RADIUS     )).exp() * MIE_INTENSITY;
+                let disk     = (-dist2_px / (2.0 * SUN_RADIUS       * SUN_RADIUS     )).exp() * SUN_INTENSITY;
+
+                let total = rayleigh + mie + disk;
+                if total < 0.01 { continue; }
+
+                let px = ((cx + dx).rem_euclid(W as i32)) as u32;
+                let py = (cy + dy).clamp(0, H as i32 - 1) as u32;
                 let idx = (py * W + px) as usize;
-                pixels[idx][0] += sun.color.x * intensity;
-                pixels[idx][1] += sun.color.y * intensity;
-                pixels[idx][2] += sun.color.z * intensity;
+                // Rayleigh warms the glow (suppress blue); Mie+disk keep full color
+                let warm_r = sun.color.x * rayleigh + sun.color.x * (mie + disk);
+                let warm_g = sun.color.y * rayleigh * 0.55 + sun.color.y * (mie + disk);
+                let warm_b = sun.color.z * rayleigh * 0.15 + sun.color.z * (mie + disk);
+                pixels[idx][0] += warm_r;
+                pixels[idx][1] += warm_g;
+                pixels[idx][2] += warm_b;
             }
         }
     }

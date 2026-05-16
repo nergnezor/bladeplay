@@ -21,20 +21,62 @@ fn vtx(pos: [f32; 3], n: [f32; 3], t: [f32; 3], uv: [f32; 2]) -> blade_render::V
     }
 }
 
+fn height(x: f32, z: f32) -> f32 {
+    // Several overlapping sine waves at different frequencies/angles
+    let h0 = (x * 0.18 + z * 0.11).sin() * 0.28;
+    let h1 = (x * 0.31 - z * 0.27).sin() * 0.15;
+    let h2 = (x * 0.07 + z * 0.19).cos() * 0.35;
+    let h3 = (x * 0.53 + z * 0.41).sin() * 0.07;
+    // Hash-based high-frequency bumps
+    let hx = (x * 1.7 + 13.7).sin() * 43758.5453;
+    let hz = (z * 2.3 + 7.1).sin() * 21234.1234;
+    let bump = ((hx + hz).sin() * 0.5 + 0.5) * 0.06;
+    h0 + h1 + h2 + h3 + bump
+}
+
 fn make_plane() -> blade_render::ProceduralGeometry {
     let s = 20.0f32;
-    let n = [0.0, 1.0, 0.0];
-    let t = [1.0, 0.0, 0.0];
-    let vertices = vec![
-        vtx([-s, 0.0, -s], n, t, [0.0, 0.0]),
-        vtx([-s, 0.0,  s], n, t, [0.0, 1.0]),
-        vtx([ s, 0.0,  s], n, t, [1.0, 1.0]),
-        vtx([ s, 0.0, -s], n, t, [1.0, 0.0]),
-    ];
+    let divs: u32 = 80;
+    let mut vertices = Vec::new();
+    let mut indices = Vec::new();
+
+    for row in 0..=divs {
+        for col in 0..=divs {
+            let u = col as f32 / divs as f32;
+            let v = row as f32 / divs as f32;
+            let x = -s + u * 2.0 * s;
+            let z = -s + v * 2.0 * s;
+            let y = height(x, z);
+
+            // Finite-difference normal
+            let eps = 0.05;
+            let dydx = (height(x + eps, z) - height(x - eps, z)) / (2.0 * eps);
+            let dydz = (height(x, z + eps) - height(x, z - eps)) / (2.0 * eps);
+            let len = (dydx * dydx + 1.0 + dydz * dydz).sqrt();
+            let n = [-dydx / len, 1.0 / len, -dydz / len];
+            let t = [1.0, dydx, 0.0];
+            let tl = (t[0] * t[0] + t[1] * t[1]).sqrt();
+            let t = [t[0] / tl, t[1] / tl, 0.0];
+
+            vertices.push(vtx([x, y, z], n, t, [u, v]));
+        }
+    }
+
+    let w = divs + 1;
+    for row in 0..divs {
+        for col in 0..divs {
+            let i00 = row * w + col;
+            let i01 = row * w + col + 1;
+            let i10 = (row + 1) * w + col;
+            let i11 = (row + 1) * w + col + 1;
+            indices.extend_from_slice(&[i00, i01, i10, i10, i01, i11]);
+        }
+    }
+
     blade_render::ProceduralGeometry {
         name: "plane".to_string(),
         vertices,
-        indices: vec![0, 1, 2, 0, 2, 3],
+        indices,
         base_color_factor: [1.0; 4],
     }
 }
@@ -414,7 +456,7 @@ impl Scene {
             if !phys.dragged && !phys.no_gravity {
                 phys.vel.y += GRAVITY * dt;
                 phys.pos += phys.vel * dt;
-                let floor = phys.radius;
+                let floor = height(phys.pos.x, phys.pos.z) + phys.radius;
                 if phys.pos.y < floor {
                     phys.pos.y = floor;
                     phys.vel.y = (-phys.vel.y * RESTITUTION).max(0.0);
