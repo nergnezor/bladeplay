@@ -1,9 +1,9 @@
 // --- Tweakable sky/sun constants (hot-reload by saving this file) ---
-const SKY_ZENITH: [f32; 3] = [0.20, 0.16, 0.35];
-const SKY_HORIZON: [f32; 3] = [0.15, 0.09, 0.12];
-const SKY_NADIR: [f32; 3] = [0.05, 0.03, 0.04];
-const SUN_INTENSITY: f32 = 20_000.0;
-const SUN_RADIUS: i32 = 14;
+const SKY_ZENITH: [f32; 3] = [1.2, 0.9, 1.8];
+const SKY_HORIZON: [f32; 3] = [0.6, 0.4, 0.5];
+const SKY_NADIR: [f32; 3] = [0.15, 0.10, 0.12];
+const SUN_INTENSITY: f32 = 200000.0;
+const SUN_RADIUS: f32 = 0.3;
 
 #[derive(Clone)]
 pub struct Sun {
@@ -20,12 +20,12 @@ pub extern "C" fn make_suns(out: &mut [Sun; 4]) {
     // vel.z = angular speed (rad/s) in xz-plane around ORBIT_CENTER.
     // Suns at positive z light the front faces (+z normals) visible to the camera.
     *out = [
-        // Suns placed at 30–60° elevation so the env-map importance sampler
-        // (which weights pixels by solid angle ∝ cos(elevation)) picks them up.
-        Sun { pos: glam::Vec3::new(-20.0, 15.0, 20.0), vel: glam::Vec3::new(0.0, 0.0,  0.15), color: glam::Vec3::new(0.4, 0.1, 1.0) },
-        Sun { pos: glam::Vec3::new(  0.0, 20.0, 15.0), vel: glam::Vec3::new(0.0, 0.0, -0.10), color: glam::Vec3::new(1.0, 0.2, 0.5) },
-        Sun { pos: glam::Vec3::new( 20.0, 15.0, 20.0), vel: glam::Vec3::new(0.0, 0.0,  0.12), color: glam::Vec3::new(1.0, 0.6, 0.0) },
-        Sun { pos: glam::Vec3::new( -5.0, 25.0, -15.0), vel: glam::Vec3::new(0.0, 0.0,  0.05), color: glam::Vec3::new(0.9, 1.0, 1.0) },
+        // Four suns spread evenly around the scene at ~45° elevation.
+        // Positioned at similar distances so they contribute equally.
+        Sun { pos: glam::Vec3::new(-22.0, 22.0,  22.0), vel: glam::Vec3::new(0.0, 0.0,  0.12), color: glam::Vec3::new(0.4, 0.1, 1.0) },
+        Sun { pos: glam::Vec3::new( 22.0, 22.0,  22.0), vel: glam::Vec3::new(0.0, 0.0, -0.09), color: glam::Vec3::new(1.0, 0.6, 0.0) },
+        Sun { pos: glam::Vec3::new( 22.0, 22.0, -22.0), vel: glam::Vec3::new(0.0, 0.0,  0.10), color: glam::Vec3::new(1.0, 0.2, 0.5) },
+        Sun { pos: glam::Vec3::new(-22.0, 22.0, -22.0), vel: glam::Vec3::new(0.0, 0.0, -0.07), color: glam::Vec3::new(0.8, 1.0, 1.0) },
     ];
 }
 
@@ -184,7 +184,7 @@ fn compute_env_pixels(suns: &[Sun], pixels: &mut [[f32; 3]]) {
         let sub_x = cx_f - cx as f32;  // fractional offset within pixel
         let sub_y = cy_f - cy as f32;
         let radius = SUN_RADIUS as f32;
-        let r_i = SUN_RADIUS * 4;
+        let r_i = (SUN_RADIUS * 4.0) as i32;
         for dy in -r_i..=r_i {
             for dx in -r_i..=r_i {
                 let px = ((cx + dx).rem_euclid(W as i32)) as u32;
@@ -204,7 +204,7 @@ fn compute_env_pixels(suns: &[Sun], pixels: &mut [[f32; 3]]) {
 }
 
 #[no_mangle]
-pub extern "C" fn write_env_hdr(suns: &[Sun; 3]) {
+pub extern "C" fn write_env_hdr(suns: &[Sun; 4]) {
     use std::io::Write as _;
     const W: u32 = ENV_W;
     const H: u32 = ENV_H;
@@ -258,7 +258,7 @@ fn frexp(x: f32) -> (f32, i32) {
 
 #[no_mangle]
 pub extern "C" fn combined_light(
-    suns: &[Sun; 3],
+    suns: &[Sun; 4],
     out_dir: &mut [f32; 3],
     out_color: &mut [f32; 3],
 ) {

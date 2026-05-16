@@ -233,6 +233,7 @@ impl Game {
         crate::hot_logic::try_reload();
         if crate::hot_logic::take_reloaded() {
             self.scene.reset_suns();
+            self.engine.reset_accumulation();
         }
 
     }
