@@ -22,6 +22,8 @@ fn vtx(pos: [f32; 3], n: [f32; 3], t: [f32; 3], uv: [f32; 2]) -> blade_render::V
 }
 
 fn height(x: f32, z: f32) -> f32 {
+    // Flat for shadow ray debugging
+    return 0.0;
     // Several overlapping sine waves at different frequencies/angles
     let h0 = (x * 0.18 + z * 0.11).sin() * 0.28;
     let h1 = (x * 0.31 - z * 0.27).sin() * 0.15;
@@ -69,7 +71,7 @@ fn make_plane() -> blade_render::ProceduralGeometry {
             let i01 = row * w + col + 1;
             let i10 = (row + 1) * w + col;
             let i11 = (row + 1) * w + col + 1;
-            indices.extend_from_slice(&[i00, i01, i10, i10, i01, i11]);
+            indices.extend_from_slice(&[i00, i10, i01, i10, i11, i01]);
         }
     }
 
@@ -374,8 +376,8 @@ impl Scene {
         crate::hot_logic::make_suns(&mut self.suns);
     }
 
-    pub fn make_env_pixels(&self) -> Vec<[f32; 3]> {
-        crate::hot_logic::make_env_pixels(&self.suns)
+    pub fn make_env_pixels(&self, draw_suns: bool) -> Vec<[f32; 3]> {
+        crate::hot_logic::make_env_pixels(&self.suns, draw_suns)
     }
 
     pub fn step_suns(&mut self, dt: f32) {
@@ -469,6 +471,30 @@ impl Scene {
             });
             engine.set_color_tint(phys.handle, [obj.color[0], obj.color[1], obj.color[2], obj.emissive]);
         }
+
+        // Upload emissive objects as point lights for ray-tracing NEE.
+        // `radius` is the physical sphere radius (used to offset shadow rays
+        // so they don't self-intersect the light's own geometry).
+        // `color` is premultiplied by intensity to overcome 1/r² falloff.
+        let intensity_scale = crate::hot_logic::point_light_intensity();
+        let point_lights: Vec<blade_render::PointLight> = wanted.values()
+            .filter(|o| o.emissive > 0.0)
+            .filter_map(|o| {
+                let phys = self.dynamic.get(&o.id)?;
+                let intensity = intensity_scale * o.emissive;
+                Some(blade_render::PointLight {
+                    pos: phys.pos.into(),
+                    radius: phys.radius,
+                    color: [
+                        o.color[0] * intensity,
+                        o.color[1] * intensity,
+                        o.color[2] * intensity,
+                    ],
+                    _pad: 0.0,
+                })
+            })
+            .collect();
+        engine.set_point_lights(&point_lights);
     }
 
     pub fn pick_dynamic_ray(&self, origin: glam::Vec3, dir: glam::Vec3, radius: f32) -> Option<(u64, f32)> {

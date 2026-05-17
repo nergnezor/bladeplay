@@ -7,6 +7,8 @@ pub fn populate(game: &mut Game, ui: &mut egui::Ui) {
         .default_open(true)
         .show(ui, |ui| game.camera.populate_hud(ui));
 
+    ui.checkbox(&mut game.draw_suns, "Draw suns");
+
     game.engine.populate_hud(ui);
 }
 

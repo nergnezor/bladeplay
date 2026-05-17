@@ -21,6 +21,7 @@ pub struct Game {
     surface_ready: bool,
     logic_src_mtime: time::SystemTime,
     rebuild_process: Option<std::process::Child>,
+    pub draw_suns: bool,
 }
 
 impl Drop for Game {
@@ -69,6 +70,7 @@ impl Game {
             surface_ready: false,
             logic_src_mtime: logic_src_mtime(),
             rebuild_process: None,
+            draw_suns: true,
         }
     }
 
@@ -171,7 +173,7 @@ impl Game {
         self.check_hot_reload();
 
         {
-            let pixels = self.scene.make_env_pixels();
+            let pixels = self.scene.make_env_pixels(self.draw_suns);
             self.engine.set_environment_map_hdr_data(
                 interact_logic::ENV_W,
                 interact_logic::ENV_H,

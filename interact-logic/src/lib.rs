@@ -5,6 +5,17 @@ const SKY_NADIR: [f32; 3] = [0.05, 0.02, 0.01];
 const SUN_INTENSITY: f32 = 2000.0;
 const SUN_RADIUS: f32 = 0.5;
 
+// --- Tweakable point-light intensity (hot-reload by saving this file) ---
+// Light color is `obj.color * obj.emissive * POINT_LIGHT_INTENSITY`.
+// Attenuation in the shader is `1/dist²`, so this number needs to be large
+// to be visible at typical scene distances of a few meters.
+const POINT_LIGHT_INTENSITY: f32 = 80.0;
+
+#[no_mangle]
+pub extern "C" fn point_light_intensity() -> f32 {
+    POINT_LIGHT_INTENSITY
+}
+
 #[derive(Clone)]
 pub struct Sun {
     pub pos: glam::Vec3,
@@ -122,22 +133,22 @@ pub extern "C" fn scene_objects(out: &mut SceneDesc) {
         color: [1.0, 1.0, 1.0], emissive: 0.0, no_gravity: 1,
     });
 
-    // --- User objects below — edit freely ---
-    out.push(ObjectDesc {
-        id: 1, model: model("sphere.glb"),
-        pos: [0.0, 5.0, 0.0], scale: 1.0,
-        color: [0.0, 1.0, 0.4], emissive: 0.0, no_gravity: 0,
-    });
-    out.push(ObjectDesc {
-        id: 2, model: model("torus.glb"),
-        pos: [2.0, 4.0, 0.0], scale: 1.0,
-        color: [1.0, 0.3, 0.8], emissive: 0.0, no_gravity: 0,
-    });
-    out.push(ObjectDesc {
-        id: 3, model: model("star.glb"),
-        pos: [-2.0, 6.0, 0.0], scale: 2.0,
-        color: [1.0, 0.9, 0.1], emissive: 0.0, no_gravity: 0,
-    });
+    // --- Point lights as emissive spheres ---
+    let lights: &[(u64, [f32; 3], [f32; 3])] = &[
+        (1,  [-6.0, 1.5,  4.0], [1.0, 0.2, 0.1]),
+        (2,  [ 6.0, 1.5,  4.0], [0.1, 0.4, 1.0]),
+        (3,  [ 0.0, 1.5, -6.0], [0.2, 1.0, 0.3]),
+        (4,  [-4.0, 3.0, -2.0], [1.0, 0.6, 0.1]),
+        (5,  [ 4.0, 3.0, -2.0], [0.8, 0.1, 1.0]),
+        (6,  [ 0.0, 4.0,  5.0], [1.0, 1.0, 0.5]),
+    ];
+    for &(id, pos, color) in lights {
+        out.push(ObjectDesc {
+            id, model: model("sphere.glb"),
+            pos, scale: 0.15,
+            color, emissive: 1.0, no_gravity: 1,
+        });
+    }
 }
 
 pub const ENV_W: u32 = 1024;
@@ -149,70 +160,10 @@ pub extern "C" fn make_env_pixels(suns: &[Sun; 4], out: *mut [f32; 3]) {
     compute_env_pixels(suns, pixels);
 }
 
-fn compute_env_pixels(suns: &[Sun], pixels: &mut [[f32; 3]]) {
-    const W: u32 = ENV_W;
-    const H: u32 = ENV_H;
-
-    // Sky gradient: zenith → horizon → nadir
-    for y in 0..H {
-        let t = y as f32 / H as f32;
-        let horizon = (-((t - 0.5).abs() * 6.0)).exp();
-        for x in 0..W {
-            let r = t * SKY_NADIR[0] + horizon * SKY_HORIZON[0] + SKY_ZENITH[0] * (1.0 - t);
-            let g = t * SKY_NADIR[1] + horizon * SKY_HORIZON[1] + SKY_ZENITH[1] * (1.0 - t);
-            let b = t * SKY_NADIR[2] + horizon * SKY_HORIZON[2] + SKY_ZENITH[2] * (1.0 - t).powf(0.6);
-            pixels[(y * W + x) as usize] = [r, g, b];
-        }
-    }
-
-    // Single pass per sun: Rayleigh + Mie + disk blended together, iterated over
-    // a circle so no square boundary artefacts appear at any intensity level.
-    const RAYLEIGH_RADIUS: f32 = 18.0;
-    const RAYLEIGH_INTENSITY: f32 = 80.0;
-    const MIE_RADIUS: f32 = 5.0;
-    const MIE_INTENSITY: f32 = 3000.0;
-    // Outer radius to iterate — driven by Rayleigh which is the widest term
-    const ITER_RADIUS: f32 = RAYLEIGH_RADIUS * 2.5;
-
-    for sun in suns {
-        let dir = sun.pos.normalize_or_zero();
-        let u = (dir.x.atan2(dir.z) + std::f32::consts::PI) / (2.0 * std::f32::consts::PI);
-        let v = (0.5 - dir.y.clamp(-1.0, 1.0).asin() / std::f32::consts::PI).clamp(0.0, 1.0);
-        let cx_f = u * W as f32;
-        let cy_f = v * H as f32;
-        let cx = cx_f as i32;
-        let cy = cy_f as i32;
-        let sub_x = cx_f - cx as f32;
-        let sub_y = cy_f - cy as f32;
-
-        let r_i = ITER_RADIUS as i32 + 1;
-        for dy in -r_i..=r_i {
-            for dx in -r_i..=r_i {
-                let fdx = dx as f32 - sub_x;
-                let fdy = dy as f32 - sub_y;
-                let dist2_px = fdx * fdx + fdy * fdy;
-                // Hard circular clip — no square edges at any level
-                if dist2_px > ITER_RADIUS * ITER_RADIUS { continue; }
-
-                let rayleigh = (-dist2_px / (2.0 * RAYLEIGH_RADIUS * RAYLEIGH_RADIUS)).exp() * RAYLEIGH_INTENSITY;
-                let mie      = (-dist2_px / (2.0 * MIE_RADIUS      * MIE_RADIUS     )).exp() * MIE_INTENSITY;
-                let disk     = (-dist2_px / (2.0 * SUN_RADIUS       * SUN_RADIUS     )).exp() * SUN_INTENSITY;
-
-                let total = rayleigh + mie + disk;
-                if total < 0.01 { continue; }
-
-                let px = ((cx + dx).rem_euclid(W as i32)) as u32;
-                let py = (cy + dy).clamp(0, H as i32 - 1) as u32;
-                let idx = (py * W + px) as usize;
-                // Rayleigh warms the glow (suppress blue); Mie+disk keep full color
-                let warm_r = sun.color.x * rayleigh + sun.color.x * (mie + disk);
-                let warm_g = sun.color.y * rayleigh * 0.55 + sun.color.y * (mie + disk);
-                let warm_b = sun.color.z * rayleigh * 0.15 + sun.color.z * (mie + disk);
-                pixels[idx][0] += warm_r;
-                pixels[idx][1] += warm_g;
-                pixels[idx][2] += warm_b;
-            }
-        }
+fn compute_env_pixels(_suns: &[Sun], pixels: &mut [[f32; 3]]) {
+    // Black environment — all light comes from point lights via ray-tracing NEE
+    for p in pixels.iter_mut() {
+        *p = [0.0, 0.0, 0.0];
     }
 }
 

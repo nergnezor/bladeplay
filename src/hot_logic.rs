@@ -6,6 +6,7 @@ type StepSunsFn      = unsafe extern "C" fn(&mut [Sun; 4], f32);
 type MakeEnvPixelsFn = unsafe extern "C" fn(&[Sun; 4], *mut [f32; 3]);
 type SceneObjectsFn  = unsafe extern "C" fn(&mut SceneDesc);
 type MakeSunsFn      = unsafe extern "C" fn(&mut [Sun; 4]);
+type PointLightIntensityFn = unsafe extern "C" fn() -> f32;
 
 struct Loaded {
     _lib: libloading::Library,
@@ -13,6 +14,7 @@ struct Loaded {
     make_env_pixels: MakeEnvPixelsFn,
     scene_objects: SceneObjectsFn,
     make_suns: MakeSunsFn,
+    point_light_intensity: PointLightIntensityFn,
     mtime: SystemTime,
     counter: u64,
 }
@@ -67,10 +69,11 @@ pub fn try_reload() {
         let make_env_pixels = sym!(b"make_env_pixels",  MakeEnvPixelsFn);
         let scene_objects   = sym!(b"scene_objects",    SceneObjectsFn);
         let make_suns       = sym!(b"make_suns",        MakeSunsFn);
+        let point_light_intensity = sym!(b"point_light_intensity", PointLightIntensityFn);
 
         let mut g = LOADED.lock().unwrap();
         let prev_counter = g.as_ref().map(|l| l.counter);
-        *g = Some(Loaded { _lib: lib, step_suns, make_env_pixels, scene_objects, make_suns, mtime, counter });
+        *g = Some(Loaded { _lib: lib, step_suns, make_env_pixels, scene_objects, make_suns, point_light_intensity, mtime, counter });
         RELOADED.store(true, std::sync::atomic::Ordering::Relaxed);
         eprintln!("[hot_logic] reloaded interact_logic (counter={counter})");
 
@@ -86,13 +89,23 @@ pub fn step_suns(suns: &mut [Sun; 4], dt: f32) {
     else { interact_logic::step_suns(suns, dt); }
 }
 
-pub fn make_env_pixels(suns: &[Sun; 4]) -> Vec<[f32; 3]> {
+pub fn make_env_pixels(suns: &[Sun; 4], draw_suns: bool) -> Vec<[f32; 3]> {
     const W: u32 = interact_logic::ENV_W;
     const H: u32 = interact_logic::ENV_H;
     let mut pixels = vec![[0f32; 3]; (W * H) as usize];
+    let masked: [Sun; 4];
+    let effective_suns = if draw_suns {
+        suns
+    } else {
+        masked = std::array::from_fn(|i| Sun {
+            color: glam::Vec3::ZERO,
+            ..suns[i].clone()
+        });
+        &masked
+    };
     let g = LOADED.lock().unwrap();
-    if let Some(l) = g.as_ref() { unsafe { (l.make_env_pixels)(suns, pixels.as_mut_ptr()) }; }
-    else { interact_logic::make_env_pixels(suns, pixels.as_mut_ptr()); }
+    if let Some(l) = g.as_ref() { unsafe { (l.make_env_pixels)(effective_suns, pixels.as_mut_ptr()) }; }
+    else { interact_logic::make_env_pixels(effective_suns, pixels.as_mut_ptr()); }
     pixels
 }
 
@@ -108,4 +121,10 @@ pub fn make_suns(out: &mut [Sun; 4]) {
     let g = LOADED.lock().unwrap();
     if let Some(l) = g.as_ref() { unsafe { (l.make_suns)(out) }; }
     else { interact_logic::make_suns(out); }
+}
+
+pub fn point_light_intensity() -> f32 {
+    let g = LOADED.lock().unwrap();
+    if let Some(l) = g.as_ref() { unsafe { (l.point_light_intensity)() } }
+    else { interact_logic::point_light_intensity() }
 }
