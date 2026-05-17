@@ -484,7 +484,8 @@ impl Scene {
                 let intensity = intensity_scale * o.emissive;
                 Some(blade_render::PointLight {
                     pos: phys.pos.into(),
-                    radius: phys.radius,
+                    // Sphere mesh is always unit-radius (add_object_with_model uses identity transform)
+                    radius: 1.0,
                     color: [
                         o.color[0] * intensity,
                         o.color[1] * intensity,
