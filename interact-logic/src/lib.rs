@@ -137,12 +137,12 @@ impl SceneDesc {
 use std::sync::{Mutex, OnceLock};
 
 const SB_N: usize = 3;          // 3×3×3 = 27 particles
-const SB_SPACING: f32 = 1.5;    // rest spacing between particle centers (m)
+const SB_SPACING: f32 = 0.85;   // rest spacing between particle centers (m)
 const SB_K: f32 = 220.0;        // spring stiffness (N/m)
 const SB_DAMPING: f32 = 0.9;    // linear velocity damping coefficient
 const SB_RESTITUTION: f32 = 0.82;
-const SB_START: glam::Vec3 = glam::Vec3::new(0.0, 7.0, 2.0);
-const SB_PARTICLE_R: f32 = 0.1; // sphere.glb has radius 1 m
+const SB_START: glam::Vec3 = glam::Vec3::new(0.0, 3.0, 2.0);
+const SB_PARTICLE_R: f32 = 0.8; // particle.glb has radius 0.08 m
 
 struct SoftBody {
     pos:     Vec<glam::Vec3>,
@@ -267,11 +267,11 @@ pub extern "C" fn scene_objects(out: &mut SceneDesc) {
         ];
         out.push(ObjectDesc {
             id: i as u64 + 1,
-            model: model("sphere.glb"),
+            model: model("particle.glb"),
             pos: (*pos).into(),
-            scale: 1.0,
+            scale: 4.0,
             color,
-            emissive: 0.0,
+            emissive: 0.0, // glass signal: IOR = 1.0 + 0.03 * 20 = 1.6
             no_gravity: 1,
         });
     }

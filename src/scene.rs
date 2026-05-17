@@ -416,6 +416,7 @@ impl Scene {
                             position: pos.into(),
                             orientation: glam::Quat::IDENTITY.into(),
                         },
+                        obj.scale,
                         blade_engine::DynamicInput::SetPosition,
                     )
                 } else {
@@ -494,6 +495,7 @@ impl Scene {
                         &format!("sun_{i}"),
                         sun_model,
                         transform,
+                        1.0,
                         blade_engine::DynamicInput::SetPosition,
                     );
                     engine.set_color_tint(handle, [sun.color.x, sun.color.y, sun.color.z, 0.4]);
