@@ -26,33 +26,45 @@ pub struct Sun {
     pub color: glam::Vec3,
 }
 
-const ORBIT_CENTER: glam::Vec3 = glam::Vec3::new(0.0, 0.0, 0.0);
+// Gravitational coupling between suns. Tune for desired orbital period.
+// At ~2000 m separation: a ≈ G/r² = 2e7/4e6 = 5 m/s² → T ≈ 2 min.
+const G_BODY: f32 = 2.0e7;
 
 #[no_mangle]
 pub extern "C" fn make_suns(out: &mut [Sun; 4]) {
-    // Very far away → near-parallel rays like a real sun; y/r ≈ elevation angle
-    // r ≈ 8000 keeps the orbit visually stable while appearing at the horizon
+    // Positions kept at ~8000 m so illumination looks like parallel sunlight.
+    // Velocities chosen so total momentum ≈ 0 and each sun has ~100 m/s speed,
+    // giving chaotic ~2-minute orbits as they gravitationally interact.
     *out = [
-        // Main sunset sun: warm orange, just above western horizon (~2°), slow drift
-        Sun { pos: glam::Vec3::new(   0.0,  280.0, -8000.0), vel: glam::Vec3::new(0.0, 0.0,  0.0003), color: glam::Vec3::new(1.0, 0.45, 0.04) },
-        // Second sun: deep red, slightly to the right and higher (~4°)
-        Sun { pos: glam::Vec3::new(1800.0,  540.0, -7800.0), vel: glam::Vec3::new(0.0, 0.0, -0.0002), color: glam::Vec3::new(1.0, 0.12, 0.04) },
-        // Third sun: purple-magenta, further left (~6°), twilight hue
-        Sun { pos: glam::Vec3::new(-2400.0, 820.0, -7600.0), vel: glam::Vec3::new(0.0, 0.0,  0.00025), color: glam::Vec3::new(0.55, 0.05, 0.90) },
+        Sun { pos: glam::Vec3::new(   0.0,  280.0, -8000.0), vel: glam::Vec3::new( 50.0, 0.0,  80.0), color: glam::Vec3::new(1.0, 0.45, 0.04) },
+        Sun { pos: glam::Vec3::new(1800.0,  540.0, -7800.0), vel: glam::Vec3::new(-15.0, 0.0, 100.0), color: glam::Vec3::new(1.0, 0.12, 0.04) },
+        Sun { pos: glam::Vec3::new(-2400.0, 820.0, -7600.0), vel: glam::Vec3::new(-35.0, 0.0,-180.0), color: glam::Vec3::new(0.55, 0.05, 0.90) },
         // Disabled
-        Sun { pos: glam::Vec3::new(   0.0, -10.0,   1.0),   vel: glam::Vec3::new(0.0, 0.0,  0.0),    color: glam::Vec3::new(0.0, 0.0, 0.0) },
+        Sun { pos: glam::Vec3::new(0.0, -10.0, 1.0), vel: glam::Vec3::ZERO, color: glam::Vec3::ZERO },
     ];
 }
 
 #[no_mangle]
 pub extern "C" fn step_suns(suns: &mut [Sun; 4], dt: f32) {
-    for sun in suns.iter_mut() {
-		return;
-        let rel = sun.pos - ORBIT_CENTER;
-        let r = (rel.x * rel.x + rel.z * rel.z).sqrt().max(0.1);
-        let angle = rel.z.atan2(rel.x) + sun.vel.z * dt;
-        sun.pos.x = ORBIT_CENTER.x + r * angle.cos();
-        sun.pos.z = ORBIT_CENTER.z + r * angle.sin();
+    // N-body gravity: accumulate pairwise accelerations then integrate.
+    let mut accels = [glam::Vec3::ZERO; 4];
+    for i in 0..4 {
+        if suns[i].color.length_squared() < 1e-6 { continue; }
+        for j in (i + 1)..4 {
+            if suns[j].color.length_squared() < 1e-6 { continue; }
+            let diff = suns[j].pos - suns[i].pos;
+            // Softening at 400 m prevents divergence on close approaches.
+            let r2 = diff.length_squared().max(400.0 * 400.0);
+            let a_mag = G_BODY / r2;
+            let dir = diff / r2.sqrt();
+            accels[i] += dir * a_mag;
+            accels[j] -= dir * a_mag;
+        }
+    }
+    for i in 0..4 {
+        if suns[i].color.length_squared() < 1e-6 { continue; }
+        suns[i].vel += accels[i] * dt;
+        suns[i].pos += suns[i].vel * dt;
     }
 }
 
