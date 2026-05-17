@@ -1,19 +1,22 @@
-// --- Tweakable sky/sun constants (hot-reload by saving this file) ---
-const SKY_ZENITH: [f32; 3] = [0.10, 0.15, 0.45];
-const SKY_HORIZON: [f32; 3] = [0.80, 0.30, 0.05];
-const SKY_NADIR: [f32; 3] = [0.05, 0.02, 0.01];
-const SUN_INTENSITY: f32 = 2000.0;
-const SUN_RADIUS: f32 = 0.5;
-
 // --- Tweakable point-light intensity (hot-reload by saving this file) ---
 // Light color is `obj.color * obj.emissive * POINT_LIGHT_INTENSITY`.
 // Attenuation in the shader is `1/dist²`, so this number needs to be large
 // to be visible at typical scene distances of a few meters.
 const POINT_LIGHT_INTENSITY: f32 = 80.0;
 
+// Sun illuminance at scene level (roughly: brdf-weighted irradiance on a unit Lambertian surface).
+// The sun PointLight color is premultiplied by dist² so that 1/dist² cancels out,
+// producing near-parallel light regardless of distance.
+const SUN_ILLUMINANCE: f32 = 2.0;
+
 #[no_mangle]
 pub extern "C" fn point_light_intensity() -> f32 {
     POINT_LIGHT_INTENSITY
+}
+
+#[no_mangle]
+pub extern "C" fn sun_illuminance() -> f32 {
+    SUN_ILLUMINANCE
 }
 
 #[derive(Clone)]
@@ -27,11 +30,17 @@ const ORBIT_CENTER: glam::Vec3 = glam::Vec3::new(0.0, 0.0, 0.0);
 
 #[no_mangle]
 pub extern "C" fn make_suns(out: &mut [Sun; 4]) {
+    // Very far away → near-parallel rays like a real sun; y/r ≈ elevation angle
+    // r ≈ 8000 keeps the orbit visually stable while appearing at the horizon
     *out = [
-        Sun { pos: glam::Vec3::new(   0.0,  0.3, -120.0), vel: glam::Vec3::new(0.0, 0.0,  0.006), color: glam::Vec3::new(1.0, 0.50, 0.05) },
-        Sun { pos: glam::Vec3::new(  70.0,  0.5, -100.0), vel: glam::Vec3::new(0.0, 0.0, -0.005), color: glam::Vec3::new(1.0, 0.15, 0.05) },
-        Sun { pos: glam::Vec3::new( -65.0,  0.5, -105.0), vel: glam::Vec3::new(0.0, 0.0,  0.007), color: glam::Vec3::new(0.55, 0.05, 0.90) },
-        Sun { pos: glam::Vec3::new(   0.0, -10.0,   1.0), vel: glam::Vec3::new(0.0, 0.0,  0.0),   color: glam::Vec3::new(0.0, 0.0, 0.0) },
+        // Main sunset sun: warm orange, just above western horizon (~2°), slow drift
+        Sun { pos: glam::Vec3::new(   0.0,  280.0, -8000.0), vel: glam::Vec3::new(0.0, 0.0,  0.0003), color: glam::Vec3::new(1.0, 0.45, 0.04) },
+        // Second sun: deep red, slightly to the right and higher (~4°)
+        Sun { pos: glam::Vec3::new(1800.0,  540.0, -7800.0), vel: glam::Vec3::new(0.0, 0.0, -0.0002), color: glam::Vec3::new(1.0, 0.12, 0.04) },
+        // Third sun: purple-magenta, further left (~6°), twilight hue
+        Sun { pos: glam::Vec3::new(-2400.0, 820.0, -7600.0), vel: glam::Vec3::new(0.0, 0.0,  0.00025), color: glam::Vec3::new(0.55, 0.05, 0.90) },
+        // Disabled
+        Sun { pos: glam::Vec3::new(   0.0, -10.0,   1.0),   vel: glam::Vec3::new(0.0, 0.0,  0.0),    color: glam::Vec3::new(0.0, 0.0, 0.0) },
     ];
 }
 
@@ -133,22 +142,6 @@ pub extern "C" fn scene_objects(out: &mut SceneDesc) {
         color: [1.0, 1.0, 1.0], emissive: 0.0, no_gravity: 1,
     });
 
-    // --- Point lights as emissive spheres ---
-    let lights: &[(u64, [f32; 3], [f32; 3])] = &[
-        (1,  [-6.0, 1.5,  4.0], [1.0, 0.2, 0.1]),
-        (2,  [ 6.0, 1.5,  4.0], [0.1, 0.4, 1.0]),
-        (3,  [ 0.0, 1.5, -6.0], [0.2, 1.0, 0.3]),
-        (4,  [-4.0, 3.0, -2.0], [1.0, 0.6, 0.1]),
-        (5,  [ 4.0, 3.0, -2.0], [0.8, 0.1, 1.0]),
-        (6,  [ 0.0, 4.0,  5.0], [1.0, 1.0, 0.5]),
-    ];
-    for &(id, pos, color) in lights {
-        out.push(ObjectDesc {
-            id, model: model("sphere.glb"),
-            pos, scale: 0.15,
-            color, emissive: 1.0, no_gravity: 1,
-        });
-    }
 }
 
 pub const ENV_W: u32 = 1024;
@@ -161,7 +154,7 @@ pub extern "C" fn make_env_pixels(suns: &[Sun; 4], out: *mut [f32; 3]) {
 }
 
 fn compute_env_pixels(_suns: &[Sun], pixels: &mut [[f32; 3]]) {
-    // Black environment — all light comes from point lights via ray-tracing NEE
+    // Black environment — all illumination comes from point lights via NEE
     for p in pixels.iter_mut() {
         *p = [0.0, 0.0, 0.0];
     }

@@ -83,7 +83,7 @@ fn make_plane() -> blade_render::ProceduralGeometry {
     }
 }
 
-fn make_sphere(lat: u32, lon: u32) -> blade_render::ProceduralGeometry {
+fn make_sphere(lat: u32, lon: u32, radius: f32) -> blade_render::ProceduralGeometry {
     use std::f32::consts::{PI, TAU};
     let mut vertices = Vec::new();
     let mut indices = Vec::new();
@@ -103,7 +103,7 @@ fn make_sphere(lat: u32, lon: u32) -> blade_render::ProceduralGeometry {
             let tx = -sin_t;
             let tz = cos_t;
             vertices.push(vtx(
-                [nx, ny, nz],
+                [nx * radius, ny * radius, nz * radius],
                 [nx, ny, nz],
                 [tx, 0.0, tz],
                 [x as f32 / lon as f32, y as f32 / lat as f32],
@@ -333,6 +333,7 @@ pub struct Scene {
     pub suns: [Sun; 4],
     dynamic: HashMap<u64, DynPhysics>,
     models: HashMap<&'static str, ModelHandle>,
+    sun_handles: [Option<blade_engine::ObjectHandle>; 4],
 }
 
 impl Scene {
@@ -358,17 +359,18 @@ impl Scene {
         );
 
         let models = Self::register_models(&mut engine);
-        let scene = Self { suns, dynamic: HashMap::new(), models };
+        let scene = Self { suns, dynamic: HashMap::new(), models, sun_handles: [None; 4] };
         (engine, scene)
     }
 
     fn register_models(engine: &mut blade_engine::Engine) -> HashMap<&'static str, ModelHandle> {
         let mut m = HashMap::new();
-        m.insert("plane.glb",  engine.create_model("plane",  vec![make_plane()]));
-        m.insert("sphere.glb", engine.create_model("sphere", vec![make_sphere(24, 48)]));
-        m.insert("cube.glb",   engine.create_model("cube",   vec![make_cube()]));
-        m.insert("torus.glb",  engine.create_model("torus",  vec![make_torus(48, 24, 1.0, 0.35)]));
-        m.insert("star.glb",   engine.create_model("star",   vec![make_star(5, 1.0, 0.4, 0.2)]));
+        m.insert("plane.glb",      engine.create_model("plane",      vec![make_plane()]));
+        m.insert("sphere.glb",     engine.create_model("sphere",     vec![make_sphere(24, 48, 1.0)]));
+        m.insert("sun_sphere.glb", engine.create_model("sun_sphere", vec![make_sphere(24, 48, 200.0)]));
+        m.insert("cube.glb",       engine.create_model("cube",       vec![make_cube()]));
+        m.insert("torus.glb",      engine.create_model("torus",      vec![make_torus(48, 24, 1.0, 0.35)]));
+        m.insert("star.glb",       engine.create_model("star",       vec![make_star(5, 1.0, 0.4, 0.2)]));
         m
     }
 
@@ -472,12 +474,43 @@ impl Scene {
             engine.set_color_tint(phys.handle, [obj.color[0], obj.color[1], obj.color[2], obj.emissive]);
         }
 
+        // Sync sun sphere geometry to current sun positions.
+        let sun_model = self.models["sun_sphere.glb"];
+        for (i, sun) in self.suns.iter().enumerate() {
+            let enabled = sun.color.length_squared() > 1e-6;
+            let transform = blade_engine::Transform {
+                position: sun.pos.into(),
+                orientation: glam::Quat::IDENTITY.into(),
+            };
+            match (self.sun_handles[i], enabled) {
+                (Some(handle), true) => {
+                    engine.teleport_object(handle, transform);
+                    engine.set_color_tint(handle, [sun.color.x, sun.color.y, sun.color.z, 0.4]);
+                }
+                (None, true) => {
+                    let handle = engine.add_object_with_model(
+                        &format!("sun_{i}"),
+                        sun_model,
+                        transform,
+                        blade_engine::DynamicInput::SetPosition,
+                    );
+                    engine.set_color_tint(handle, [sun.color.x, sun.color.y, sun.color.z, 0.4]);
+                    self.sun_handles[i] = Some(handle);
+                }
+                (Some(handle), false) => {
+                    engine.remove_object(handle);
+                    self.sun_handles[i] = None;
+                }
+                (None, false) => {}
+            }
+        }
+
         // Upload emissive objects as point lights for ray-tracing NEE.
         // `radius` is the physical sphere radius (used to offset shadow rays
         // so they don't self-intersect the light's own geometry).
         // `color` is premultiplied by intensity to overcome 1/r² falloff.
         let intensity_scale = crate::hot_logic::point_light_intensity();
-        let point_lights: Vec<blade_render::PointLight> = wanted.values()
+        let mut point_lights: Vec<blade_render::PointLight> = wanted.values()
             .filter(|o| o.emissive > 0.0)
             .filter_map(|o| {
                 let phys = self.dynamic.get(&o.id)?;
@@ -495,6 +528,22 @@ impl Scene {
                 })
             })
             .collect();
+
+        // Suns as point lights: color premultiplied by dist² so 1/dist² cancels out,
+        // producing near-parallel illumination regardless of how far away the sun is.
+        let sun_illum = crate::hot_logic::sun_illuminance();
+        for sun in self.suns.iter() {
+            if sun.color.length_squared() < 1e-6 { continue; }
+            let dist_sq = sun.pos.length_squared();
+            let c = sun.color * (dist_sq * sun_illum);
+            point_lights.push(blade_render::PointLight {
+                pos: sun.pos.into(),
+                radius: 201.0,
+                color: c.into(),
+                _pad: 0.0,
+            });
+        }
+
         engine.set_point_lights(&point_lights);
     }
 
