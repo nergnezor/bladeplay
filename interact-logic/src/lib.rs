@@ -7,7 +7,7 @@ const POINT_LIGHT_INTENSITY: f32 = 8.0;
 // Sun illuminance at scene level (roughly: brdf-weighted irradiance on a unit Lambertian surface).
 // The sun PointLight color is premultiplied by dist² so that 1/dist² cancels out,
 // producing near-parallel light regardless of distance.
-const SUN_ILLUMINANCE: f32 = 5.0;
+const SUN_ILLUMINANCE: f32 = 3.0;
 
 #[no_mangle]
 pub extern "C" fn point_light_intensity() -> f32 {
@@ -37,8 +37,8 @@ pub extern "C" fn make_suns(out: &mut [Sun; 4]) {
     // giving chaotic ~2-minute orbits as they gravitationally interact.
     *out = [
         Sun { pos: glam::Vec3::new(   0.0,  280.0, -8000.0), vel: glam::Vec3::new( 50.0, 0.0,  80.0), color: glam::Vec3::new(1.0, 0.45, 0.04) },
-        Sun { pos: glam::Vec3::new(1800.0,  540.0, -7800.0), vel: glam::Vec3::new(-15.0, 0.0, 100.0), color: glam::Vec3::new(1.0, 0.12, 0.04) },
-        Sun { pos: glam::Vec3::new(-2400.0, 820.0, -7600.0), vel: glam::Vec3::new(-35.0, 0.0,-180.0), color: glam::Vec3::new(0.55, 0.05, 0.90) },
+        Sun { pos: glam::Vec3::new(1800.0,  540.0, -7800.0), vel: glam::Vec3::new(-15.0, 0.0, 100.0), color: glam::Vec3::new(0.8, 0.5, 0.3) },
+        Sun { pos: glam::Vec3::new(-2400.0, 820.0, -7600.0), vel: glam::Vec3::new(-35.0, 0.0,-180.0), color: glam::Vec3::new(0.8, 0.3, 0.4) },
         // Disabled
         Sun { pos: glam::Vec3::new(0.0, -10.0, 1.0), vel: glam::Vec3::ZERO, color: glam::Vec3::ZERO },
     ];
