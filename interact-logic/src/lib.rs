@@ -2,12 +2,12 @@
 // Light color is `obj.color * obj.emissive * POINT_LIGHT_INTENSITY`.
 // Attenuation in the shader is `1/dist²`, so this number needs to be large
 // to be visible at typical scene distances of a few meters.
-const POINT_LIGHT_INTENSITY: f32 = 80.0;
+const POINT_LIGHT_INTENSITY: f32 = 8.0;
 
 // Sun illuminance at scene level (roughly: brdf-weighted irradiance on a unit Lambertian surface).
 // The sun PointLight color is premultiplied by dist² so that 1/dist² cancels out,
 // producing near-parallel light regardless of distance.
-const SUN_ILLUMINANCE: f32 = 2.0;
+const SUN_ILLUMINANCE: f32 = 5.0;
 
 #[no_mangle]
 pub extern "C" fn point_light_intensity() -> f32 {
@@ -47,6 +47,7 @@ pub extern "C" fn make_suns(out: &mut [Sun; 4]) {
 #[no_mangle]
 pub extern "C" fn step_suns(suns: &mut [Sun; 4], dt: f32) {
     for sun in suns.iter_mut() {
+		return;
         let rel = sun.pos - ORBIT_CENTER;
         let r = (rel.x * rel.x + rel.z * rel.z).sqrt().max(0.1);
         let angle = rel.z.atan2(rel.x) + sun.vel.z * dt;
@@ -117,6 +118,11 @@ impl SceneDesc {
 // Reserved IDs: 100=ground, 101-103=sun spheres, 104=ball, 105=cube
 // IDs 1-99 are free for user objects.
 
+fn lcg(s: u32) -> (f32, u32) {
+    let n = s.wrapping_mul(1664525).wrapping_add(1013904223);
+    (n as f32 / u32::MAX as f32, n)
+}
+
 /// Returns the desired scene for this frame.
 /// Edit freely — objects are added/removed live on save.
 #[no_mangle]
@@ -142,6 +148,26 @@ pub extern "C" fn scene_objects(out: &mut SceneDesc) {
         color: [1.0, 1.0, 1.0], emissive: 0.0, no_gravity: 1,
     });
 
+    // // Occluder rocks between camera and suns (toward -z) for crepuscular rays.
+    // // The shadow bands they cast through the forward-scattered fog appear as visible shafts.
+    // let rocks: &[(u64, f32, f32)] = &[
+    //     (60, -8.0, -15.0),
+    //     (61,  7.0, -15.0),
+    //     (62, -16.0, -22.0),
+    //     (63,  14.0, -24.0),
+    //     (64,  0.0,  -30.0),
+    //     (65, -6.0,  -36.0),
+    //     (66,  10.0, -38.0),
+    //     (67, -14.0, -44.0),
+    //     (68,  4.0,  -48.0),
+    // ];
+    // for &(id, x, z) in rocks {
+    //     out.push(ObjectDesc {
+    //         id, model: model("sphere.glb"),
+    //         pos: [x, 1.0, z], scale: 1.0,
+    //         color: [0.45, 0.40, 0.35], emissive: 0.0, no_gravity: 1,
+    //     });
+    // }
 }
 
 pub const ENV_W: u32 = 1024;

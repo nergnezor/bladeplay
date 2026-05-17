@@ -21,3 +21,14 @@ log = "0.4"
 env_logger = "0.11"
 winit = "0.30"
 libc = "0.2"
+
+[patch."https://github.com/nergnezor/blade"]
+blade-asset    = { path = "../blade/src/blade-asset" }
+blade-egui     = { path = "../blade/src/blade-egui" }
+blade-engine   = { path = "../blade/src/blade-engine" }
+blade-graphics = { path = "../blade/src/blade-graphics" }
+blade-helpers  = { path = "../blade/src/blade-helpers" }
+blade-macros   = { path = "../blade/src/blade-macros" }
+blade-particle = { path = "../blade/src/blade-particle" }
+blade-render   = { path = "../blade/src/blade-render" }
+blade-util     = { path = "../blade/src/blade-util" }

@@ -359,6 +359,7 @@ impl Scene {
         );
 
         let models = Self::register_models(&mut engine);
+
         let scene = Self { suns, dynamic: HashMap::new(), models, sun_handles: [None; 4] };
         (engine, scene)
     }
@@ -367,7 +368,8 @@ impl Scene {
         let mut m = HashMap::new();
         m.insert("plane.glb",      engine.create_model("plane",      vec![make_plane()]));
         m.insert("sphere.glb",     engine.create_model("sphere",     vec![make_sphere(24, 48, 1.0)]));
-        m.insert("sun_sphere.glb", engine.create_model("sun_sphere", vec![make_sphere(24, 48, 200.0)]));
+        m.insert("particle.glb",   engine.create_model("particle",   vec![make_sphere(8, 16, 0.08)]));
+        m.insert("sun_sphere.glb", engine.create_model("sun_sphere", vec![make_sphere(24, 48, 150.0)]));
         m.insert("cube.glb",       engine.create_model("cube",       vec![make_cube()]));
         m.insert("torus.glb",      engine.create_model("torus",      vec![make_torus(48, 24, 1.0, 0.35)]));
         m.insert("star.glb",       engine.create_model("star",       vec![make_star(5, 1.0, 0.4, 0.2)]));
