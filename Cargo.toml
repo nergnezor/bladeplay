@@ -10,11 +10,10 @@ edition = "2024"
 [dependencies]
 interact-logic = { path = "interact-logic" }
 libloading = "0.8"
-blade-asset = { git = "https://github.com/nergnezor/blade", branch = "wayland-niri-fix" }
-blade-engine = { git = "https://github.com/nergnezor/blade", branch = "wayland-niri-fix" }
-blade-helpers = { git = "https://github.com/nergnezor/blade", branch = "wayland-niri-fix" }
-blade-render = { git = "https://github.com/nergnezor/blade", branch = "wayland-niri-fix" }
-blade-particle = { git = "https://github.com/nergnezor/blade", branch = "wayland-niri-fix" }
+blade-asset = { git = "https://github.com/nergnezor/blade" }
+blade-engine = { git = "https://github.com/nergnezor/blade" }
+blade-helpers = { git = "https://github.com/nergnezor/blade" }
+blade-render = { git = "https://github.com/nergnezor/blade" }
 egui = "0.34"
 egui-winit = { version = "0.34", default-features = false, features = ["links"] }
 glam = { version = "0.30", features = ["mint"] }
@@ -22,14 +21,3 @@ log = "0.4"
 env_logger = "0.11"
 winit = "0.30"
 libc = "0.2"
-
-[patch."https://github.com/nergnezor/blade"]
-blade-engine   = { path = "../blade/src/blade-engine" }
-blade-helpers  = { path = "../blade/src/blade-helpers" }
-blade-render   = { path = "../blade/src/blade-render" }
-blade-particle = { path = "../blade/src/blade-particle" }
-blade-asset    = { path = "../blade/src/blade-asset" }
-blade-graphics = { path = "../blade/src/blade-graphics" }
-blade-egui     = { path = "../blade/src/blade-egui" }
-blade-macros   = { path = "../blade/src/blade-macros" }
-blade-util     = { path = "../blade/src/blade-util" }
