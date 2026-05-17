@@ -128,11 +128,109 @@ impl SceneDesc {
 }
 
 // Reserved IDs: 100=ground, 101-103=sun spheres, 104=ball, 105=cube
-// IDs 1-99 are free for user objects.
+// IDs 1-99: soft body particles
 
-fn lcg(s: u32) -> (f32, u32) {
-    let n = s.wrapping_mul(1664525).wrapping_add(1013904223);
-    (n as f32 / u32::MAX as f32, n)
+// ---------------------------------------------------------------------------
+// Soft body simulation — spring-mass lattice, entirely in the .so.
+// State persists between frames via OnceLock; resets on hot-reload.
+// ---------------------------------------------------------------------------
+use std::sync::{Mutex, OnceLock};
+
+const SB_N: usize = 3;          // 3×3×3 = 27 particles
+const SB_SPACING: f32 = 1.5;    // rest spacing between particle centers (m)
+const SB_K: f32 = 220.0;        // spring stiffness (N/m)
+const SB_DAMPING: f32 = 0.9;    // linear velocity damping coefficient
+const SB_RESTITUTION: f32 = 0.82;
+const SB_START: glam::Vec3 = glam::Vec3::new(0.0, 7.0, 2.0);
+const SB_PARTICLE_R: f32 = 0.1; // sphere.glb has radius 1 m
+
+struct SoftBody {
+    pos:     Vec<glam::Vec3>,
+    vel:     Vec<glam::Vec3>,
+    springs: Vec<(usize, usize, f32)>, // (i, j, rest_length)
+    last_ns: u64,
+}
+
+fn wall_clock_ns() -> u64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_nanos() as u64
+}
+
+impl SoftBody {
+    fn new() -> Self {
+        let half = (SB_N as f32 - 1.0) / 2.0;
+        let mut pos = Vec::with_capacity(SB_N * SB_N * SB_N);
+        for ix in 0..SB_N {
+            for iy in 0..SB_N {
+                for iz in 0..SB_N {
+                    pos.push(SB_START + glam::Vec3::new(
+                        (ix as f32 - half) * SB_SPACING,
+                        (iy as f32)        * SB_SPACING,
+                        (iz as f32 - half) * SB_SPACING,
+                    ));
+                }
+            }
+        }
+        // Connect every pair within √2 * SB_SPACING: includes nearest-neighbour
+        // and face-diagonal springs, giving volume-preserving stiffness.
+        let mut springs = Vec::new();
+        for i in 0..pos.len() {
+            for j in (i + 1)..pos.len() {
+                let d = (pos[j] - pos[i]).length();
+                if d <= SB_SPACING * 1.8 {
+                    springs.push((i, j, d));
+                }
+            }
+        }
+        SoftBody {
+            vel: vec![glam::Vec3::ZERO; pos.len()],
+            pos,
+            springs,
+            last_ns: wall_clock_ns(),
+        }
+    }
+
+    fn step(&mut self) {
+        let now = wall_clock_ns();
+        let dt = ((now.saturating_sub(self.last_ns)) as f32 * 1e-9).min(0.033);
+        self.last_ns = now;
+        if dt < 1e-7 { return; }
+
+        let n = self.pos.len();
+        let mut force: Vec<glam::Vec3> =
+            (0..n).map(|_| glam::Vec3::new(0.0, -9.8, 0.0)).collect();
+
+        for &(i, j, rest) in &self.springs {
+            let d = self.pos[j] - self.pos[i];
+            let len = d.length().max(1e-4);
+            let f = d / len * (SB_K * (len - rest));
+            force[i] += f;
+            force[j] -= f;
+        }
+
+        for k in 0..n {
+            self.vel[k] += force[k] * dt;
+            self.vel[k] *= (1.0 - SB_DAMPING * dt).max(0.0);
+            self.pos[k] += self.vel[k] * dt;
+            if self.pos[k].y < SB_PARTICLE_R {
+                self.pos[k].y = SB_PARTICLE_R;
+                if self.vel[k].y < 0.0 {
+                    self.vel[k].y = -self.vel[k].y * SB_RESTITUTION;
+                }
+            }
+        }
+    }
+}
+
+static SOFTBODY: OnceLock<Mutex<SoftBody>> = OnceLock::new();
+
+fn softbody_step_and_read() -> Vec<glam::Vec3> {
+    let guard = SOFTBODY.get_or_init(|| Mutex::new(SoftBody::new()));
+    let mut sb = guard.lock().unwrap();
+    sb.step();
+    sb.pos.clone()
 }
 
 /// Returns the desired scene for this frame.
@@ -148,39 +246,37 @@ pub extern "C" fn scene_objects(out: &mut SceneDesc) {
         color: [1.0, 1.0, 1.0], emissive: 0.0, no_gravity: 1,
     });
 
-    // Ball and cube
-    out.push(ObjectDesc {
-        id: 104, model: model("sphere.glb"),
-        pos: [-2.0, 0.5, 0.0], scale: 1.0,
-        color: [1.0, 1.0, 1.0], emissive: 0.0, no_gravity: 1,
-    });
+    // Cube — static reference object
     out.push(ObjectDesc {
         id: 105, model: model("cube.glb"),
-        pos: [2.0, 0.5, 0.0], scale: 1.0,
+        pos: [5.0, 0.5, 0.0], scale: 1.0,
         color: [1.0, 1.0, 1.0], emissive: 0.0, no_gravity: 1,
     });
 
-    // // Occluder rocks between camera and suns (toward -z) for crepuscular rays.
-    // // The shadow bands they cast through the forward-scattered fog appear as visible shafts.
-    // let rocks: &[(u64, f32, f32)] = &[
-    //     (60, -8.0, -15.0),
-    //     (61,  7.0, -15.0),
-    //     (62, -16.0, -22.0),
-    //     (63,  14.0, -24.0),
-    //     (64,  0.0,  -30.0),
-    //     (65, -6.0,  -36.0),
-    //     (66,  10.0, -38.0),
-    //     (67, -14.0, -44.0),
-    //     (68,  4.0,  -48.0),
-    // ];
-    // for &(id, x, z) in rocks {
-    //     out.push(ObjectDesc {
-    //         id, model: model("sphere.glb"),
-    //         pos: [x, 1.0, z], scale: 1.0,
-    //         color: [0.45, 0.40, 0.35], emissive: 0.0, no_gravity: 1,
-    //     });
-    // }
+    // Soft body blob: 3×3×3 sphere particles connected by springs.
+    // no_gravity:1 so scene.rs skips gravity; we integrate it ourselves above.
+    let positions = softbody_step_and_read();
+    let total = positions.len() as f32;
+    for (i, pos) in positions.iter().enumerate() {
+        let t = i as f32 / (total - 1.0);
+        // Warm orange → purple gradient matching the suns
+        let color = [
+            1.0 - t * 0.5,
+            0.35 + t * 0.1,
+            0.05 + t * 0.85,
+        ];
+        out.push(ObjectDesc {
+            id: i as u64 + 1,
+            model: model("sphere.glb"),
+            pos: (*pos).into(),
+            scale: 1.0,
+            color,
+            emissive: 0.0,
+            no_gravity: 1,
+        });
+    }
 }
+
 
 pub const ENV_W: u32 = 1024;
 pub const ENV_H: u32 = 512;
