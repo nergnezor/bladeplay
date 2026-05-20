@@ -18,6 +18,31 @@
 				"process handle -p true -s false -n false SIGTRAP",
 				"process handle -p true -s false -n false SIGCHLD"
 			]
+		},
+		{
+			"type": "node-terminal",
+			"request": "launch",
+			"name": "Android Build (aarch64)",
+			"cwd": "${workspaceFolder}",
+			"command": "cargo build -p interact --target aarch64-linux-android",
+			"env": {
+				"ANDROID_HOME": "/usr/lib/android-sdk",
+				"ANDROID_SDK_ROOT": "/usr/lib/android-sdk",
+				"ANDROID_NDK_ROOT": "/usr/lib/android-sdk/ndk/27.2.12479018",
+				"PATH": "/usr/lib/android-sdk/platform-tools:${env:PATH}"
+			}
+		},
+		{
+			"type": "node-terminal",
+			"request": "launch",
+			"name": "Android Run on Device",
+			"cwd": "${workspaceFolder}/.android-runner",
+			"command": "adb get-state && test -d /usr/lib/android-sdk/build-tools || (echo 'Missing Android build-tools in /usr/lib/android-sdk/build-tools. Install them, then rerun this launch config.' && exit 1); test -d /usr/lib/android-sdk/platforms || (echo 'Missing Android platforms in /usr/lib/android-sdk/platforms. Install package android-sdk-platform-23 (or newer), then rerun.' && exit 1); cargo apk run",
+			"env": {
+				"ANDROID_HOME": "/usr/lib/android-sdk",
+				"ANDROID_NDK_ROOT": "/usr/lib/android-sdk/ndk/27.2.12479018",
+				"PATH": "/usr/lib/android-sdk/platform-tools:${env:PATH}"
+			}
 		}
 	]
 }

@@ -30,6 +30,25 @@
 					"endsPattern": "^\\[Finished"
 				}
 			}
+		},
+		{
+			"label": "Build Android (aarch64)",
+			"type": "shell",
+			"command": "cargo build -p interact --target aarch64-linux-android",
+			"options": {
+				"cwd": "${workspaceFolder}",
+				"env": {
+					"ANDROID_HOME": "/usr/lib/android-sdk",
+					"ANDROID_SDK_ROOT": "/usr/lib/android-sdk",
+					"ANDROID_NDK_ROOT": "/usr/lib/android-sdk/ndk/27.2.12479018",
+					"PATH": "/usr/lib/android-sdk/platform-tools:${env:PATH}"
+				}
+			},
+			"group": {
+				"kind": "build",
+				"isDefault": false
+			},
+			"problemMatcher": []
 		}
 	]
 }

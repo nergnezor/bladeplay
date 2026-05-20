@@ -2,6 +2,25 @@
 
 En interaktiv 3D-scen med path-tracing, procedural geometri och live hot-reload.
 
+## Build och run
+
+Snabbstart från repo-roten:
+
+```bash
+make doctor
+make build
+make run
+```
+
+Android:
+
+```bash
+make build-android
+make apk-run
+```
+
+Full setup-guide finns i `BUILDING.md`.
+
 ## Kom igång
 
 ```bash

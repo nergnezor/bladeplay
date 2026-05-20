@@ -1,15 +1,23 @@
+#[cfg(not(target_os = "android"))]
 mod game;
+#[cfg(not(target_os = "android"))]
 mod hot_logic;
+#[cfg(not(target_os = "android"))]
 mod hud;
+#[cfg(not(target_os = "android"))]
 mod picking;
+#[cfg(not(target_os = "android"))]
 mod scene;
 
+#[cfg(not(target_os = "android"))]
 use game::{Game, QuitEvent};
 
+#[cfg(not(target_os = "android"))]
 struct App {
     game: Option<Game>,
 }
 
+#[cfg(not(target_os = "android"))]
 impl winit::application::ApplicationHandler for App {
     fn resumed(&mut self, event_loop: &winit::event_loop::ActiveEventLoop) {
         self.game = Some(Game::new(event_loop));
@@ -35,6 +43,7 @@ impl winit::application::ApplicationHandler for App {
     }
 }
 
+#[cfg(not(target_os = "android"))]
 fn main() {
     // Prevent SIGCHLD from being delivered when cargo-build subprocesses exit.
     // POSIX: with SIG_IGN, children are auto-reaped with no signal to the parent.
@@ -45,4 +54,9 @@ fn main() {
     let event_loop = winit::event_loop::EventLoop::new().unwrap();
     let mut app = App { game: None };
     event_loop.run_app(&mut app).unwrap();
+}
+
+#[cfg(target_os = "android")]
+fn main() {
+    // Android runtime integration is not wired up in this crate yet.
 }
