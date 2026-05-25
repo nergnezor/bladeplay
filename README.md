@@ -1,7 +1,7 @@
 # interact
 
 En interaktiv 3D-scen med path-tracing, procedural geometri och live hot-reload.
-
+![current state](image.png)
 ## Build och run
 
 Snabbstart från repo-roten:
