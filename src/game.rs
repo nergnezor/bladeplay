@@ -38,15 +38,20 @@ impl Game {
             )
             .unwrap();
 
+        // Inside the 10×10×10 m room, looking across the room.
+        let cam_pos = glam::Vec3::new(0.0, 1.7,  3.5);
+        let target  = glam::Vec3::new(0.0, 1.5, -2.0);
+        let forward = (target - cam_pos).normalize();
+        let rot = glam::Quat::from_rotation_arc(glam::Vec3::NEG_Z, forward);
         let camera = ControlledCamera {
             inner: Camera {
-                pos: glam::Vec3::new(0.0, 3.0, 12.0).into(),
-                rot: glam::Quat::from_rotation_x(0.0).into(),
-                fov_y: 1.0,
-                depth: 100.0,
+                pos: cam_pos.into(),
+                rot: rot.into(),
+                fov_y: 1.2,
+                depth: 200.0,
                 fov: None,
             },
-            fly_speed: 10.0,
+            fly_speed: 4.0,
         };
 
         let (engine, scene) = Scene::new(&window);
@@ -171,15 +176,6 @@ impl Game {
         self.last_update = time::Instant::now();
 
         self.check_hot_reload();
-
-        {
-            let pixels = self.scene.make_env_pixels(self.draw_suns);
-            self.engine.set_environment_map_hdr_data(
-                interact_logic::ENV_W,
-                interact_logic::ENV_H,
-                &pixels,
-            );
-        }
 
         self.engine.update(dt);
         self.scene.step_suns(dt);

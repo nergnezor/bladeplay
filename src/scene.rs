@@ -6,6 +6,21 @@ use interact_logic::ObjectDesc;
 const GRAVITY: f32 = -9.8;
 const RESTITUTION: f32 = 0.75;
 
+const EXPLODE_SPEED: f32 = 6.0;   // impact speed (m/s) to trigger explosion
+const FRAGMENT_LIFE: f32 = 2.5;   // seconds before fragments fade out
+const FRAG_SPEED:    f32 = 3.5;   // fragment outward speed (m/s)
+const FRAG_SCALE:    f32 = 1.0;   // particle.glb scale for fragments
+
+struct Fragment {
+    handle:   blade_engine::ObjectHandle,
+    pos:      glam::Vec3,
+    vel:      glam::Vec3,
+    radius:   f32,
+    color:    [f32; 3],
+    emissive: f32,
+    life:     f32,
+}
+
 fn pack_snorm(x: f32, y: f32, z: f32) -> u32 {
     let p = |v: f32| (v.clamp(-1.0, 1.0) * 127.0).round() as i8 as u8;
     u32::from_le_bytes([p(x), p(y), p(z), 127])
@@ -38,7 +53,7 @@ fn height(x: f32, z: f32) -> f32 {
 
 fn make_plane() -> blade_render::ProceduralGeometry {
     let s = 20.0f32;
-    let divs: u32 = 80;
+    let divs: u32 = 2; // flat surface — no tessellation needed
     let mut vertices = Vec::new();
     let mut indices = Vec::new();
 
@@ -174,6 +189,53 @@ fn make_cube() -> blade_render::ProceduralGeometry {
 
     blade_render::ProceduralGeometry {
         name: "cube".to_string(),
+        vertices,
+        indices,
+        base_color_factor: [1.0; 4],
+    }
+}
+
+fn make_room_shell() -> blade_render::ProceduralGeometry {
+    let h = 0.5f32;
+    // 5 faces with inward-pointing normals (no bottom — ground plane handles the floor).
+    // Vertex order is reversed vs make_cube so cross(v1-v0, v2-v0) points INTO the room.
+    let faces: [([f32; 3], [f32; 3], [[f32; 3]; 4]); 5] = [
+        // Ceiling — inward normal [0,-1,0]
+        ([0.0, -1.0, 0.0], [1.0, 0.0, 0.0], [
+            [ h, h, -h], [ h, h,  h], [-h, h,  h], [-h, h, -h],
+        ]),
+        // +Z wall — inward normal [0,0,-1]
+        ([0.0, 0.0, -1.0], [-1.0, 0.0, 0.0], [
+            [-h,  h, h], [ h,  h, h], [ h, -h, h], [-h, -h, h],
+        ]),
+        // -Z wall — inward normal [0,0,+1]
+        ([0.0, 0.0, 1.0], [1.0, 0.0, 0.0], [
+            [ h,  h, -h], [-h,  h, -h], [-h, -h, -h], [ h, -h, -h],
+        ]),
+        // +X wall — inward normal [-1,0,0]
+        ([-1.0, 0.0, 0.0], [0.0, 0.0, -1.0], [
+            [h,  h,  h], [h,  h, -h], [h, -h, -h], [h, -h,  h],
+        ]),
+        // -X wall — inward normal [+1,0,0]
+        ([1.0, 0.0, 0.0], [0.0, 0.0, 1.0], [
+            [-h,  h, -h], [-h,  h,  h], [-h, -h,  h], [-h, -h, -h],
+        ]),
+    ];
+
+    let uvs = [[0.0, 1.0], [1.0, 1.0], [1.0, 0.0], [0.0, 0.0]];
+    let mut vertices = Vec::new();
+    let mut indices = Vec::new();
+
+    for (face_idx, (n, t, pts)) in faces.iter().enumerate() {
+        let base = (face_idx * 4) as u32;
+        for (i, p) in pts.iter().enumerate() {
+            vertices.push(vtx(*p, *n, *t, uvs[i]));
+        }
+        indices.extend_from_slice(&[base, base + 1, base + 2, base, base + 2, base + 3]);
+    }
+
+    blade_render::ProceduralGeometry {
+        name: "room".to_string(),
         vertices,
         indices,
         base_color_factor: [1.0; 4],
@@ -327,11 +389,14 @@ struct DynPhysics {
     spawn_pos: glam::Vec3,
     dragged: bool,
     no_gravity: bool,
+    respawn_timer: f32, // > 0 = waiting to respawn
 }
 
 pub struct Scene {
     pub suns: [Sun; 4],
     dynamic: HashMap<u64, DynPhysics>,
+    fragments: HashMap<u64, Fragment>,
+    next_frag_id: u64,
     models: HashMap<&'static str, ModelHandle>,
     sun_handles: [Option<blade_engine::ObjectHandle>; 4],
 }
@@ -353,14 +418,21 @@ impl Scene {
                 data_path: data_path.as_os_str().to_string_lossy().into_owned(),
                 cache_path: "asset-cache".to_string(),
                 time_step: 0.01,
-                render_backend: blade_engine::config::RenderBackend::RayTracer,
+                render_backend: blade_engine::config::RenderBackend::Sdfgi,
                 gui_enabled: cfg!(debug_assertions),
             },
         );
 
         let models = Self::register_models(&mut engine);
 
-        let scene = Self { suns, dynamic: HashMap::new(), models, sun_handles: [None; 4] };
+        let scene = Self {
+            suns,
+            dynamic: HashMap::new(),
+            fragments: HashMap::new(),
+            next_frag_id: 100_000,
+            models,
+            sun_handles: [None; 4],
+        };
         (engine, scene)
     }
 
@@ -371,6 +443,7 @@ impl Scene {
         m.insert("particle.glb",   engine.create_model("particle",   vec![make_sphere(8, 16, 0.08)]));
         m.insert("sun_sphere.glb", engine.create_model("sun_sphere", vec![make_sphere(24, 48, 150.0)]));
         m.insert("cube.glb",       engine.create_model("cube",       vec![make_cube()]));
+        m.insert("room.glb",       engine.create_model("room",       vec![make_room_shell()]));
         m.insert("torus.glb",      engine.create_model("torus",      vec![make_torus(48, 24, 1.0, 0.35)]));
         m.insert("star.glb",       engine.create_model("star",       vec![make_star(5, 1.0, 0.4, 0.2)]));
         m
@@ -445,6 +518,7 @@ impl Scene {
                     radius: obj.scale * 0.5,
                     spawn_pos: pos,
                     dragged: false,
+                    respawn_timer: 0.0,
                     no_gravity: obj.no_gravity != 0,
                 });
             }
@@ -460,13 +534,61 @@ impl Scene {
             }
             phys.no_gravity = obj.no_gravity != 0;
 
-            if !phys.dragged && !phys.no_gravity {
+            if phys.respawn_timer > 0.0 {
+                phys.respawn_timer -= dt;
+                if phys.respawn_timer <= 0.0 {
+                    phys.pos = phys.spawn_pos;
+                    phys.vel = glam::Vec3::ZERO;
+                }
+            }
+
+            if !phys.dragged && !phys.no_gravity && phys.respawn_timer <= 0.0 {
                 phys.vel.y += GRAVITY * dt;
                 phys.pos += phys.vel * dt;
                 let floor = height(phys.pos.x, phys.pos.z) + phys.radius;
                 if phys.pos.y < floor {
+                    let impact = -phys.vel.y;
                     phys.pos.y = floor;
-                    phys.vel.y = (-phys.vel.y * RESTITUTION).max(0.0);
+                    phys.vel.y = (phys.vel.y.abs() * RESTITUTION).max(0.0);
+                    if impact > EXPLODE_SPEED && self.fragments.len() < 24 {
+                        let frag_model = self.models["particle.glb"];
+                        let impact_pos = phys.pos;
+                        let impact_color = obj.color;
+                        let impact_emissive = obj.emissive;
+                        for i in 0..8u32 {
+                            let angle = i as f32 * std::f32::consts::TAU / 8.0;
+                            let vel = glam::Vec3::new(
+                                angle.cos() * FRAG_SPEED,
+                                FRAG_SPEED * 0.8,
+                                angle.sin() * FRAG_SPEED,
+                            );
+                            let fid = self.next_frag_id;
+                            self.next_frag_id += 1;
+                            let handle = engine.add_object_with_model(
+                                &format!("frag_{fid}"),
+                                frag_model,
+                                blade_engine::Transform {
+                                    position: impact_pos.into(),
+                                    orientation: glam::Quat::IDENTITY.into(),
+                                },
+                                FRAG_SCALE,
+                                blade_engine::DynamicInput::SetPosition,
+                            );
+                            self.fragments.insert(fid, Fragment {
+                                handle,
+                                pos: impact_pos,
+                                vel,
+                                radius: FRAG_SCALE * 0.08,
+                                color: impact_color,
+                                emissive: impact_emissive * 0.5,
+                                life: FRAGMENT_LIFE,
+                            });
+                        }
+                        // Hide and schedule respawn at spawn position.
+                        phys.respawn_timer = 2.5;
+                        phys.vel = glam::Vec3::ZERO;
+                        phys.pos = glam::Vec3::new(0.0, -100.0, 0.0); // hide below floor
+                    }
                 }
             }
 
@@ -548,7 +670,90 @@ impl Scene {
             });
         }
 
+        // Fragment physics update + point lights from fragments.
+        let mut dead_frags: Vec<u64> = Vec::new();
+        for (fid, frag) in &mut self.fragments {
+            frag.life -= dt;
+            if frag.life <= 0.0 {
+                dead_frags.push(*fid);
+                continue;
+            }
+            frag.vel.y += GRAVITY * dt;
+            frag.pos += frag.vel * dt;
+            let floor = frag.radius;
+            if frag.pos.y < floor {
+                frag.pos.y = floor;
+                frag.vel.y = (frag.vel.y.abs() * RESTITUTION * 0.6).max(0.0);
+                frag.vel.x *= 0.7;
+                frag.vel.z *= 0.7;
+            }
+            engine.teleport_object(frag.handle, blade_engine::Transform {
+                position: frag.pos.into(),
+                orientation: glam::Quat::IDENTITY.into(),
+            });
+            let fade = (frag.life / FRAGMENT_LIFE).min(1.0);
+            engine.set_color_tint(frag.handle, [
+                frag.color[0], frag.color[1], frag.color[2],
+                frag.emissive * fade,
+            ]);
+            if frag.emissive > 0.0 {
+                let intensity = intensity_scale * frag.emissive * fade;
+                point_lights.push(blade_render::PointLight {
+                    pos: frag.pos.into(),
+                    radius: frag.radius,
+                    color: [
+                        frag.color[0] * intensity,
+                        frag.color[1] * intensity,
+                        frag.color[2] * intensity,
+                    ],
+                    _pad: 0.0,
+                });
+            }
+        }
+        for fid in dead_frags {
+            if let Some(frag) = self.fragments.remove(&fid) {
+                engine.remove_object(frag.handle);
+            }
+        }
+
         engine.set_point_lights(&point_lights);
+
+        // Build SDF object list for the dynamic SDF build pass.
+        // Dynamic objects: apply squish deformation based on vertical speed.
+        let mut sdf_objects: Vec<blade_render::SdfObject> = wanted.iter()
+            .filter_map(|(id, obj)| {
+                let phys = self.dynamic.get(id)?;
+                let type_id = match obj.model_str() {
+                    "sphere.glb" | "particle.glb" => blade_render::SDF_TYPE_SPHERE,
+                    "cube.glb" | "star.glb"       => blade_render::SDF_TYPE_BOX,
+                    "torus.glb"                   => blade_render::SDF_TYPE_TORUS,
+                    _ => return None, // room, plane, sun_sphere handled analytically
+                };
+                let s = obj.scale;
+                // Squish deformation: fast vertical movement flattens the sphere.
+                let squish = (phys.vel.y.abs() * 0.04).min(0.35);
+                let (sx, sy, sz) = if type_id == blade_render::SDF_TYPE_SPHERE && squish > 0.01 {
+                    (s * (1.0 + squish), s * (1.0 - squish * 0.5), s * (1.0 + squish))
+                } else {
+                    (s, s, s)
+                };
+                Some(blade_render::SdfObject {
+                    pos:     [phys.pos.x, phys.pos.y, phys.pos.z, 0.0],
+                    scale:   [sx, sy, sz],
+                    type_id,
+                })
+            })
+            .collect();
+        // Fragment spheres also contribute to the SDF.
+        for frag in self.fragments.values() {
+            let r = frag.radius;
+            sdf_objects.push(blade_render::SdfObject {
+                pos:     [frag.pos.x, frag.pos.y, frag.pos.z, 0.0],
+                scale:   [r, r, r],
+                type_id: blade_render::SDF_TYPE_SPHERE,
+            });
+        }
+        engine.set_sdf_objects(&sdf_objects);
     }
 
     pub fn pick_dynamic_ray(&self, origin: glam::Vec3, dir: glam::Vec3, radius: f32) -> Option<(u64, f32)> {

@@ -2,7 +2,7 @@
 // Light color is `obj.color * obj.emissive * POINT_LIGHT_INTENSITY`.
 // Attenuation in the shader is `1/dist²`, so this number needs to be large
 // to be visible at typical scene distances of a few meters.
-const POINT_LIGHT_INTENSITY: f32 = 8.0;
+const POINT_LIGHT_INTENSITY: f32 = 4.0;
 
 // Sun illuminance at scene level (roughly: brdf-weighted irradiance on a unit Lambertian surface).
 // The sun PointLight color is premultiplied by dist² so that 1/dist² cancels out,
@@ -35,11 +35,12 @@ pub extern "C" fn make_suns(out: &mut [Sun; 4]) {
     // Positions kept at ~8000 m so illumination looks like parallel sunlight.
     // Velocities chosen so total momentum ≈ 0 and each sun has ~100 m/s speed,
     // giving chaotic ~2-minute orbits as they gravitationally interact.
+    // All suns disabled — room is fully enclosed, sun rays are blocked by walls.
+    // Re-enable by setting non-zero colors if the scene changes to outdoor.
     *out = [
-        Sun { pos: glam::Vec3::new(   0.0,  280.0, -8000.0), vel: glam::Vec3::new( 50.0, 0.0,  80.0), color: glam::Vec3::new(1.0, 0.45, 0.04) },
-        Sun { pos: glam::Vec3::new(1800.0,  540.0, -7800.0), vel: glam::Vec3::new(-15.0, 0.0, 100.0), color: glam::Vec3::new(0.8, 0.5, 0.3) },
-        Sun { pos: glam::Vec3::new(-2400.0, 820.0, -7600.0), vel: glam::Vec3::new(-35.0, 0.0,-180.0), color: glam::Vec3::new(0.8, 0.3, 0.4) },
-        // Disabled
+        Sun { pos: glam::Vec3::new(0.0, -10.0, 1.0), vel: glam::Vec3::ZERO, color: glam::Vec3::ZERO },
+        Sun { pos: glam::Vec3::new(0.0, -10.0, 1.0), vel: glam::Vec3::ZERO, color: glam::Vec3::ZERO },
+        Sun { pos: glam::Vec3::new(0.0, -10.0, 1.0), vel: glam::Vec3::ZERO, color: glam::Vec3::ZERO },
         Sun { pos: glam::Vec3::new(0.0, -10.0, 1.0), vel: glam::Vec3::ZERO, color: glam::Vec3::ZERO },
     ];
 }
@@ -127,111 +128,8 @@ impl SceneDesc {
     }
 }
 
-// Reserved IDs: 100=ground, 101-103=sun spheres, 104=ball, 105=cube
-// IDs 1-99: soft body particles
-
-// ---------------------------------------------------------------------------
-// Soft body simulation — spring-mass lattice, entirely in the .so.
-// State persists between frames via OnceLock; resets on hot-reload.
-// ---------------------------------------------------------------------------
-use std::sync::{Mutex, OnceLock};
-
-const SB_N: usize = 3;          // 3×3×3 = 27 particles
-const SB_SPACING: f32 = 0.85;   // rest spacing between particle centers (m)
-const SB_K: f32 = 220.0;        // spring stiffness (N/m)
-const SB_DAMPING: f32 = 0.9;    // linear velocity damping coefficient
-const SB_RESTITUTION: f32 = 0.82;
-const SB_START: glam::Vec3 = glam::Vec3::new(0.0, 3.0, 2.0);
-const SB_PARTICLE_R: f32 = 0.8; // particle.glb has radius 0.08 m
-
-struct SoftBody {
-    pos:     Vec<glam::Vec3>,
-    vel:     Vec<glam::Vec3>,
-    springs: Vec<(usize, usize, f32)>, // (i, j, rest_length)
-    last_ns: u64,
-}
-
-fn wall_clock_ns() -> u64 {
-    std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .unwrap_or_default()
-        .as_nanos() as u64
-}
-
-impl SoftBody {
-    fn new() -> Self {
-        let half = (SB_N as f32 - 1.0) / 2.0;
-        let mut pos = Vec::with_capacity(SB_N * SB_N * SB_N);
-        for ix in 0..SB_N {
-            for iy in 0..SB_N {
-                for iz in 0..SB_N {
-                    pos.push(SB_START + glam::Vec3::new(
-                        (ix as f32 - half) * SB_SPACING,
-                        (iy as f32)        * SB_SPACING,
-                        (iz as f32 - half) * SB_SPACING,
-                    ));
-                }
-            }
-        }
-        // Connect every pair within √2 * SB_SPACING: includes nearest-neighbour
-        // and face-diagonal springs, giving volume-preserving stiffness.
-        let mut springs = Vec::new();
-        for i in 0..pos.len() {
-            for j in (i + 1)..pos.len() {
-                let d = (pos[j] - pos[i]).length();
-                if d <= SB_SPACING * 1.8 {
-                    springs.push((i, j, d));
-                }
-            }
-        }
-        SoftBody {
-            vel: vec![glam::Vec3::ZERO; pos.len()],
-            pos,
-            springs,
-            last_ns: wall_clock_ns(),
-        }
-    }
-
-    fn step(&mut self) {
-        let now = wall_clock_ns();
-        let dt = ((now.saturating_sub(self.last_ns)) as f32 * 1e-9).min(0.033);
-        self.last_ns = now;
-        if dt < 1e-7 { return; }
-
-        let n = self.pos.len();
-        let mut force: Vec<glam::Vec3> =
-            (0..n).map(|_| glam::Vec3::new(0.0, -9.8, 0.0)).collect();
-
-        for &(i, j, rest) in &self.springs {
-            let d = self.pos[j] - self.pos[i];
-            let len = d.length().max(1e-4);
-            let f = d / len * (SB_K * (len - rest));
-            force[i] += f;
-            force[j] -= f;
-        }
-
-        for k in 0..n {
-            self.vel[k] += force[k] * dt;
-            self.vel[k] *= (1.0 - SB_DAMPING * dt).max(0.0);
-            self.pos[k] += self.vel[k] * dt;
-            if self.pos[k].y < SB_PARTICLE_R {
-                self.pos[k].y = SB_PARTICLE_R;
-                if self.vel[k].y < 0.0 {
-                    self.vel[k].y = -self.vel[k].y * SB_RESTITUTION;
-                }
-            }
-        }
-    }
-}
-
-static SOFTBODY: OnceLock<Mutex<SoftBody>> = OnceLock::new();
-
-fn softbody_step_and_read() -> Vec<glam::Vec3> {
-    let guard = SOFTBODY.get_or_init(|| Mutex::new(SoftBody::new()));
-    let mut sb = guard.lock().unwrap();
-    sb.step();
-    sb.pos.clone()
-}
+// Reserved IDs: 100=ground, 101-103=sun spheres, 200=room shell
+// IDs 1-20: scene objects
 
 /// Returns the desired scene for this frame.
 /// Edit freely — objects are added/removed live on save.
@@ -239,40 +137,71 @@ fn softbody_step_and_read() -> Vec<glam::Vec3> {
 pub extern "C" fn scene_objects(out: &mut SceneDesc) {
     *out = SceneDesc::new();
 
-    // Ground
+    // Ground plane (y=0)
     out.push(ObjectDesc {
         id: 100, model: model("plane.glb"),
         pos: [0.0, 0.0, 0.0], scale: 1.0,
-        color: [1.0, 1.0, 1.0], emissive: 0.0, no_gravity: 1,
+        color: [0.85, 0.80, 0.75], emissive: 0.0, no_gravity: 1,
     });
 
-    // Cube — static reference object
+    // Room shell — 10×10×10 m box with inward-facing normals.
+    // Centered at [0,5,0] so floor=y0, ceiling=y10, walls at x±5, z±5.
     out.push(ObjectDesc {
-        id: 105, model: model("cube.glb"),
-        pos: [5.0, 0.5, 0.0], scale: 1.0,
-        color: [1.0, 1.0, 1.0], emissive: 0.0, no_gravity: 1,
+        id: 200, model: model("room.glb"),
+        pos: [0.0, 5.0, 0.0], scale: 10.0,
+        color: [0.90, 0.90, 0.90], emissive: 0.0, no_gravity: 1,
     });
 
-    // Soft body blob: 3×3×3 sphere particles connected by springs.
-    // no_gravity:1 so scene.rs skips gravity; we integrate it ourselves above.
-    let positions = softbody_step_and_read();
-    let total = positions.len() as f32;
-    for (i, pos) in positions.iter().enumerate() {
-        let t = i as f32 / (total - 1.0);
-        // Warm orange → purple gradient matching the suns
-        let color = [
-            1.0 - t * 0.5,
-            0.35 + t * 0.1,
-            0.05 + t * 0.85,
-        ];
+    // 10 floating emissive spheres (radius 0.3 m = scale 0.3), various colors.
+    // emissive=3.0 → point light intensity = POINT_LIGHT_INTENSITY * 3.0.
+    let lights: &[(u64, [f32; 3], [f32; 3])] = &[
+        (1,  [ 0.0, 2.5,  0.0], [1.0, 0.15, 0.10]), // red
+        (2,  [ 2.0, 4.0,  1.5], [1.0, 0.50, 0.05]), // orange
+        (3,  [-2.0, 3.0, -1.0], [1.0, 0.95, 0.10]), // yellow
+        (4,  [ 1.5, 5.5, -2.0], [0.10, 1.0, 0.15]), // green
+        (5,  [-1.5, 6.5,  2.0], [0.05, 0.6, 1.00]), // cyan
+        (6,  [ 3.0, 3.5, -0.5], [0.15, 0.2, 1.00]), // blue
+        (7,  [-3.0, 5.0,  1.0], [0.75, 0.1, 1.00]), // violet
+        (8,  [ 0.0, 7.0,  2.5], [1.00, 0.1, 0.60]), // magenta
+        (9,  [ 2.5, 6.0,  2.5], [0.05, 1.0, 0.65]), // teal
+        (10, [-2.5, 4.0, -2.5], [1.00, 0.9, 0.30]), // warm white
+    ];
+    // particle.glb has radius 0.08 m (256 triangles vs sphere.glb's 2304).
+    // scale = 0.3 / 0.08 = 3.75 gives 0.3 m effective radius.
+    for &(id, pos, color) in lights {
         out.push(ObjectDesc {
-            id: i as u64 + 1,
-            model: model("particle.glb"),
-            pos: (*pos).into(),
-            scale: 4.0,
-            color,
-            emissive: 0.0, // glass signal: IOR = 1.0 + 0.03 * 20 = 1.6
-            no_gravity: 1,
+            id, model: model("particle.glb"),
+            pos, scale: 3.75, color, emissive: 3.0, no_gravity: 1,
+        });
+    }
+
+    // Large white sphere on floor (scale=1.0 → radius 1 m, center at y=1).
+    out.push(ObjectDesc {
+        id: 11, model: model("sphere.glb"),
+        pos: [-2.0, 1.0, 1.5], scale: 1.0,
+        color: [0.95, 0.95, 0.95], emissive: 0.0, no_gravity: 1,
+    });
+
+    // White cube on floor (scale=1.0 → 1×1×1 m, center at y=0.5).
+    out.push(ObjectDesc {
+        id: 12, model: model("cube.glb"),
+        pos: [2.0, 0.5, -1.5], scale: 1.0,
+        color: [0.95, 0.95, 0.95], emissive: 0.0, no_gravity: 1,
+    });
+
+    // Falling glowing spheres — start high, fall, squish on impact, explode.
+    // scale=0.6 → 0.6 m radius sphere.  emissive drives the point light.
+    let fallers: &[(u64, [f32; 3], [f32; 3])] = &[
+        (20, [ 1.0, 9.0,  1.0], [1.00, 0.20, 0.05]),
+        (21, [-1.5, 9.5,  0.5], [0.15, 0.50, 1.00]),
+        (22, [ 0.5, 9.2, -1.5], [0.60, 1.00, 0.10]),
+        (23, [-1.0, 9.8, -0.5], [1.00, 0.80, 0.10]),
+    ];
+    for &(id, pos, color) in fallers {
+        out.push(ObjectDesc {
+            id, model: model("sphere.glb"),
+            pos, scale: 0.6,
+            color, emissive: 2.5, no_gravity: 0,
         });
     }
 }
