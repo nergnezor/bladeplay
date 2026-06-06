@@ -7,6 +7,16 @@ const GRAVITY: f32 = -9.8;
 const RESTITUTION: f32 = 0.75;
 
 const EXPLODE_SPEED: f32 = 6.0;
+// The mirror sphere rolls around the floor at a fixed speed, bouncing off walls.
+const ROLLER_ID:     u64 = 11;
+const ROLLER_SPEED:  f32 = 2.5;   // m/s, constant
+const ROLLER_RADIUS: f32 = 1.0;   // visible sphere radius (scale 1.0)
+// Room interior half-extents (walls at x±5, z±10 after the depth stretch).
+const ROOM_HALF_X:   f32 = 5.0;
+const ROOM_HALF_Z:   f32 = 10.0;
+// A ball doomed to shatter first squashes flat against the floor for this long,
+// then bursts into fragments.
+const CRUSH_TIME:    f32 = 0.18;
 const FRAGMENT_LIFE: f32 = 1.5;
 const FRAG_SPEED:    f32 = 3.5;
 const FRAG_SCALE:    f32 = 1.0;
@@ -206,28 +216,32 @@ fn make_cube() -> blade_render::ProceduralGeometry {
 
 fn make_room_shell() -> blade_render::ProceduralGeometry {
     let h = 0.5f32;
+    // Depth factor: stretch the room along Z so it reads as a deep hall. The
+    // room desc scales by 10, so z spans ±(h*DEPTH*10) = ±10 m at DEPTH=2.
+    const DEPTH: f32 = 2.0;
+    let d = h * DEPTH;
     // 5 faces with inward-pointing normals (no bottom — ground plane handles the floor).
     // Vertex order is reversed vs make_cube so cross(v1-v0, v2-v0) points INTO the room.
     let faces: [([f32; 3], [f32; 3], [[f32; 3]; 4]); 5] = [
         // Ceiling — inward normal [0,-1,0]
         ([0.0, -1.0, 0.0], [1.0, 0.0, 0.0], [
-            [ h, h, -h], [ h, h,  h], [-h, h,  h], [-h, h, -h],
+            [ h, h, -d], [ h, h,  d], [-h, h,  d], [-h, h, -d],
         ]),
         // +Z wall — inward normal [0,0,-1]
         ([0.0, 0.0, -1.0], [-1.0, 0.0, 0.0], [
-            [-h,  h, h], [ h,  h, h], [ h, -h, h], [-h, -h, h],
+            [-h,  h, d], [ h,  h, d], [ h, -h, d], [-h, -h, d],
         ]),
         // -Z wall — inward normal [0,0,+1]
         ([0.0, 0.0, 1.0], [1.0, 0.0, 0.0], [
-            [ h,  h, -h], [-h,  h, -h], [-h, -h, -h], [ h, -h, -h],
+            [ h,  h, -d], [-h,  h, -d], [-h, -h, -d], [ h, -h, -d],
         ]),
         // +X wall — inward normal [-1,0,0]
         ([-1.0, 0.0, 0.0], [0.0, 0.0, -1.0], [
-            [h,  h,  h], [h,  h, -h], [h, -h, -h], [h, -h,  h],
+            [h,  h,  d], [h,  h, -d], [h, -h, -d], [h, -h,  d],
         ]),
         // -X wall — inward normal [+1,0,0]
         ([1.0, 0.0, 0.0], [0.0, 0.0, 1.0], [
-            [-h,  h, -h], [-h,  h,  h], [-h, -h,  h], [-h, -h, -h],
+            [-h,  h, -d], [-h,  h,  d], [-h, -h,  d], [-h, -h, -d],
         ]),
     ];
 
@@ -399,6 +413,8 @@ struct DynPhysics {
     dragged: bool,
     no_gravity: bool,
     respawn_timer: f32, // > 0 = waiting to respawn
+    crush_timer: f32,   // > 0 = squashing on the floor before shattering
+    crush_impact: f32,  // impact speed that triggered the crush (for fragment vel)
 }
 
 pub struct Scene {
@@ -553,6 +569,8 @@ impl Scene {
                     spawn_pos: pos,
                     dragged: false,
                     respawn_timer: 0.0,
+                    crush_timer: 0.0,
+                    crush_impact: 0.0,
                     no_gravity: obj.no_gravity != 0,
                 });
             }
@@ -560,6 +578,37 @@ impl Scene {
 
         for (id, phys) in &mut self.dynamic {
             let obj = &wanted[id];
+
+            // Mirror sphere: roll across the floor at constant speed, bouncing
+            // off the walls. Bypasses the static-sync / gravity paths entirely.
+            if *id == ROLLER_ID {
+                // Seed a horizontal velocity once, then keep its speed fixed.
+                if phys.vel.x == 0.0 && phys.vel.z == 0.0 {
+                    phys.vel = glam::Vec3::new(0.8, 0.0, 0.6).normalize() * ROLLER_SPEED;
+                    phys.pos.y = height(phys.pos.x, phys.pos.z) + ROLLER_RADIUS;
+                }
+                phys.pos += phys.vel * dt;
+                // Bounce off the four walls, clamping inside the room.
+                let lim_x = ROOM_HALF_X - ROLLER_RADIUS;
+                let lim_z = ROOM_HALF_Z - ROLLER_RADIUS;
+                if phys.pos.x >  lim_x { phys.pos.x =  lim_x; phys.vel.x = -phys.vel.x.abs(); }
+                if phys.pos.x < -lim_x { phys.pos.x = -lim_x; phys.vel.x =  phys.vel.x.abs(); }
+                if phys.pos.z >  lim_z { phys.pos.z =  lim_z; phys.vel.z = -phys.vel.z.abs(); }
+                if phys.pos.z < -lim_z { phys.pos.z = -lim_z; phys.vel.z =  phys.vel.z.abs(); }
+                phys.pos.y = height(phys.pos.x, phys.pos.z) + ROLLER_RADIUS;
+                // Renormalise to keep the speed exactly constant after bounces.
+                phys.vel = phys.vel.normalize() * ROLLER_SPEED;
+                phys.no_gravity = true;
+
+                engine.set_sphere_squash(phys.handle, [1.0, 1.0, 1.0]);
+                engine.teleport_object(phys.handle, blade_engine::Transform {
+                    position: phys.pos.into(),
+                    orientation: glam::Quat::IDENTITY.into(),
+                });
+                engine.set_color_tint(phys.handle, [obj.color[0], obj.color[1], obj.color[2], obj.emissive]);
+                continue;
+            }
+
             let declared_pos = glam::Vec3::from(obj.pos);
             if declared_pos != phys.spawn_pos {
                 phys.pos = declared_pos;
@@ -579,7 +628,46 @@ impl Scene {
                 }
             }
 
-            if !phys.dragged && !phys.no_gravity && phys.respawn_timer <= 0.0 {
+            // Crush phase: doomed ball pinned to the floor, squashing flat. When
+            // the timer runs out it bursts into fragments (handled below).
+            if phys.crush_timer > 0.0 {
+                phys.crush_timer -= dt;
+                let floor = height(phys.pos.x, phys.pos.z) + phys.radius;
+                phys.pos.y = floor;
+                phys.vel = glam::Vec3::ZERO;
+                if phys.crush_timer <= 0.0 {
+                    let impact_pos = phys.pos;
+                    let impact_color = obj.color;
+                    let impact_emissive = obj.emissive;
+                    let burst = (phys.crush_impact / EXPLODE_SPEED).clamp(1.0, 2.0);
+                    for i in 0..8u32 {
+                        // Find a free pool slot.
+                        let Some(slot) = self.frag_pool.iter_mut().find(|s| s.active.is_none()) else { break; };
+                        let angle = i as f32 * std::f32::consts::TAU / 8.0;
+                        let vel = glam::Vec3::new(
+                            angle.cos() * FRAG_SPEED * burst,
+                            FRAG_SPEED * 0.8 * burst,
+                            angle.sin() * FRAG_SPEED * burst,
+                        );
+                        engine.teleport_object(slot.handle, blade_engine::Transform {
+                            position: impact_pos.into(),
+                            orientation: glam::Quat::IDENTITY.into(),
+                        });
+                        slot.active = Some(FragActive {
+                            pos: impact_pos,
+                            vel,
+                            color: impact_color,
+                            emissive: impact_emissive * 0.5,
+                            life: FRAGMENT_LIFE,
+                        });
+                    }
+                    phys.respawn_timer = 2.5;
+                    phys.vel = glam::Vec3::ZERO;
+                    phys.pos = glam::Vec3::new(0.0, HIDDEN_Y, 0.0);
+                }
+            }
+
+            if !phys.dragged && !phys.no_gravity && phys.respawn_timer <= 0.0 && phys.crush_timer <= 0.0 {
                 phys.vel.y += GRAVITY * dt;
                 phys.pos += phys.vel * dt;
                 let floor = height(phys.pos.x, phys.pos.z) + phys.radius;
@@ -588,39 +676,31 @@ impl Scene {
                     phys.pos.y = floor;
                     phys.vel.y = (phys.vel.y.abs() * RESTITUTION).max(0.0);
                     if impact > EXPLODE_SPEED {
-                        let impact_pos = phys.pos;
-                        let impact_color = obj.color;
-                        let impact_emissive = obj.emissive;
-                        for i in 0..8u32 {
-                            // Find a free pool slot.
-                            let Some(slot) = self.frag_pool.iter_mut().find(|s| s.active.is_none()) else { break; };
-                            let angle = i as f32 * std::f32::consts::TAU / 8.0;
-                            let vel = glam::Vec3::new(
-                                angle.cos() * FRAG_SPEED,
-                                FRAG_SPEED * 0.8,
-                                angle.sin() * FRAG_SPEED,
-                            );
-                            engine.teleport_object(slot.handle, blade_engine::Transform {
-                                position: impact_pos.into(),
-                                orientation: glam::Quat::IDENTITY.into(),
-                            });
-                            slot.active = Some(FragActive {
-                                pos: impact_pos,
-                                vel,
-                                color: impact_color,
-                                emissive: impact_emissive * 0.5,
-                                life: FRAGMENT_LIFE,
-                            });
-                        }
-                        phys.respawn_timer = 2.5;
+                        // Begin the crush: pin to floor and squash before shattering.
+                        phys.crush_timer = CRUSH_TIME;
+                        phys.crush_impact = impact;
                         phys.vel = glam::Vec3::ZERO;
-                        phys.pos = glam::Vec3::new(0.0, HIDDEN_Y, 0.0);
                     }
                 }
             }
 
+            // Ellipsoid squash for the visible analytical sphere — only while
+            // crushing on the floor (flattens Y, widens XZ). Balls stay perfectly
+            // round in the air; the deformation is purely a ground-impact effect.
+            let squish = if phys.crush_timer > 0.0 {
+                let t = (phys.crush_timer / CRUSH_TIME).clamp(0.0, 1.0);
+                0.7 * (1.0 - (1.0 - t).powi(2))
+            } else {
+                0.0
+            };
+            let squash = [1.0 + squish, 1.0 - squish * 0.5, 1.0 + squish];
+            engine.set_sphere_squash(phys.handle, squash);
+
+            // Keep the flattened ball grounded: lower the centre by the height
+            // it lost so its bottom still rests on the floor.
+            let drop = phys.radius * (squash[1] - 1.0); // negative when flattened
             engine.teleport_object(phys.handle, blade_engine::Transform {
-                position: phys.pos.into(),
+                position: [phys.pos.x, phys.pos.y + drop, phys.pos.z].into(),
                 orientation: glam::Quat::IDENTITY.into(),
             });
             engine.set_color_tint(phys.handle, [obj.color[0], obj.color[1], obj.color[2], obj.emissive]);
@@ -665,7 +745,8 @@ impl Scene {
         // `color` is premultiplied by intensity to overcome 1/r² falloff.
         let intensity_scale = crate::hot_logic::point_light_intensity();
         let mut point_lights: Vec<blade_render::PointLight> = wanted.values()
-            .filter(|o| o.emissive > 0.0)
+            // Skip the mirror flag range (0.001..0.005) — it's not a real light.
+            .filter(|o| o.emissive >= 0.005)
             .filter_map(|o| {
                 let phys = self.dynamic.get(&o.id)?;
                 let intensity = intensity_scale * o.emissive;
@@ -750,15 +831,26 @@ impl Scene {
                     _ => return None, // room, plane, sun_sphere handled analytically
                 };
                 let s = obj.scale;
-                // Squish deformation: fast vertical movement flattens the sphere.
-                let squish = (phys.vel.y.abs() * 0.04).min(0.35);
+                // Squish deformation: only while crushing on the floor. The ball
+                // squashes hardest at the start of its crush phase (timer near
+                // CRUSH_TIME) and stays flat until it bursts. Round in the air.
+                let squish = if phys.crush_timer > 0.0 {
+                    let t = (phys.crush_timer / CRUSH_TIME).clamp(0.0, 1.0);
+                    0.7 * (1.0 - (1.0 - t).powi(2))
+                } else {
+                    0.0
+                };
+                // A crushed sphere widens to conserve volume and sits on the floor.
                 let (sx, sy, sz) = if type_id == blade_render::SDF_TYPE_SPHERE && squish > 0.01 {
                     (s * (1.0 + squish), s * (1.0 - squish * 0.5), s * (1.0 + squish))
                 } else {
                     (s, s, s)
                 };
+                // Keep the flattened ball grounded: lower its centre by the amount
+                // it lost in height so the bottom still rests on the floor.
+                let pos_y = phys.pos.y - (s - sy);
                 Some(blade_render::SdfObject {
-                    pos:     [phys.pos.x, phys.pos.y, phys.pos.z, 0.0],
+                    pos:     [phys.pos.x, pos_y, phys.pos.z, 0.0],
                     scale:   [sx, sy, sz],
                     type_id,
                 })

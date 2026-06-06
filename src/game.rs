@@ -41,9 +41,10 @@ impl Game {
             )
             .unwrap();
 
-        // Inside the 10×10×10 m room, wide view of the whole space.
-        let cam_pos = glam::Vec3::new(0.0, 2.5,  4.0);
-        let target  = glam::Vec3::new(0.0, 2.5, -4.0);
+        // Inside the deep 10×10×20 m room (z spans ±10), backed up near the
+        // +Z wall looking down the length of the hall.
+        let cam_pos = glam::Vec3::new(0.0, 2.5,  9.0);
+        let target  = glam::Vec3::new(0.0, 2.5, -6.0);
         let forward = (target - cam_pos).normalize();
         let rot = glam::Quat::from_rotation_arc(glam::Vec3::NEG_Z, forward);
         let camera = ControlledCamera {

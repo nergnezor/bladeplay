@@ -181,11 +181,12 @@ pub extern "C" fn scene_objects(out: &mut SceneDesc) {
         });
     }
 
-    // Large white sphere on floor (scale=1.0 → radius 1 m, center at y=1).
+    // Large mirror sphere on floor (scale=1.0 → radius 1 m, center at y=1).
+    // emissive 0.003 = mirror flag (perfect specular reflection of the room).
     out.push(ObjectDesc {
         id: 11, model: model("sphere.glb"),
         pos: [-2.0, 1.0, 1.5], scale: 1.0,
-        color: [0.95, 0.95, 0.95], emissive: 2.0, no_gravity: 1,
+        color: [0.95, 0.95, 0.95], emissive: 0.003, no_gravity: 1,
     });
 
     // White cube on floor (scale=1.0 → 1×1×1 m, center at y=0.5).
