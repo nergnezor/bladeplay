@@ -11,6 +11,7 @@ pub struct Game {
     pub camera: ControlledCamera,
     pub window: winit::window::Window,
     last_update: time::Instant,
+    start_time:  time::Instant,
     egui_state: egui_winit::State,
     egui_viewport_id: egui::ViewportId,
     dragging_dyn: Option<u64>,
@@ -34,13 +35,15 @@ impl Game {
     pub fn new(event_loop: &winit::event_loop::ActiveEventLoop) -> Self {
         let window = event_loop
             .create_window(
-                winit::window::Window::default_attributes().with_title("blade-interact"),
+                winit::window::Window::default_attributes()
+                    .with_title("blade-interact")
+                    .with_inner_size(winit::dpi::LogicalSize::new(800u32, 533u32)),
             )
             .unwrap();
 
-        // Inside the 10×10×10 m room, looking across the room.
-        let cam_pos = glam::Vec3::new(0.0, 1.7,  3.5);
-        let target  = glam::Vec3::new(0.0, 1.5, -2.0);
+        // Inside the 10×10×10 m room, wide view of the whole space.
+        let cam_pos = glam::Vec3::new(0.0, 2.5,  4.0);
+        let target  = glam::Vec3::new(0.0, 2.5, -4.0);
         let forward = (target - cam_pos).normalize();
         let rot = glam::Quat::from_rotation_arc(glam::Vec3::NEG_Z, forward);
         let camera = ControlledCamera {
@@ -54,7 +57,8 @@ impl Game {
             fly_speed: 4.0,
         };
 
-        let (engine, scene) = Scene::new(&window);
+        let (mut engine, scene) = Scene::new(&window);
+        engine.set_render_scale(0.12);
 
         let egui_context = egui::Context::default();
         let egui_viewport_id = egui_context.viewport_id();
@@ -66,6 +70,7 @@ impl Game {
         Self {
             engine, scene, camera, window,
             last_update: time::Instant::now(),
+            start_time:  time::Instant::now(),
             egui_state, egui_viewport_id,
             dragging_dyn: None,
             drag_z: 0.0,
@@ -172,9 +177,11 @@ impl Game {
     }
 
     fn on_draw(&mut self) {
+        let frame_start = time::Instant::now();
         let dt = self.last_update.elapsed().as_secs_f32();
-        self.last_update = time::Instant::now();
+        self.last_update = frame_start;
 
+        crate::hot_logic::set_elapsed(self.start_time.elapsed().as_secs_f32());
         self.check_hot_reload();
 
         self.engine.update(dt);
@@ -198,6 +205,7 @@ impl Game {
             .egui_state
             .egui_ctx()
             .tessellate(egui_output.shapes, egui_output.pixels_per_point);
+        let pre_render = time::Instant::now();
         self.engine.render(
             &self.camera.inner.into(),
             &primitives,
@@ -205,8 +213,37 @@ impl Game {
             self.window.inner_size(),
             self.window.scale_factor() as f32,
         );
+        let render_ms = pre_render.elapsed().as_secs_f32() * 1000.0;
 
         let _ = egui_output.viewport_output[&self.egui_viewport_id].repaint_delay;
+
+        // Track frame times, report avg/max every 300 frames (excl. pauses >200ms).
+        let frame_ms = frame_start.elapsed().as_secs_f32() * 1000.0;
+        if frame_ms < 200.0 {
+            static COUNT:      std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(0);
+            static SUM_FRAME:  std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+            static MAX_FRAME:  std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(0);
+            static SUM_RENDER: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+            static MAX_RENDER: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(0);
+            let count = COUNT.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+            SUM_FRAME.fetch_add((frame_ms * 100.0) as u64, std::sync::atomic::Ordering::Relaxed);
+            MAX_FRAME.fetch_max(frame_ms.to_bits(), std::sync::atomic::Ordering::Relaxed);
+            SUM_RENDER.fetch_add((render_ms * 100.0) as u64, std::sync::atomic::Ordering::Relaxed);
+            MAX_RENDER.fetch_max(render_ms.to_bits(), std::sync::atomic::Ordering::Relaxed);
+            if count % 300 == 299 {
+                let sf  = SUM_FRAME.swap(0, std::sync::atomic::Ordering::Relaxed);
+                let mf  = f32::from_bits(MAX_FRAME.swap(0, std::sync::atomic::Ordering::Relaxed));
+                let sr  = SUM_RENDER.swap(0, std::sync::atomic::Ordering::Relaxed);
+                let mr  = f32::from_bits(MAX_RENDER.swap(0, std::sync::atomic::Ordering::Relaxed));
+                let avg_f = sf as f32 / 100.0 / 300.0;
+                let avg_r = sr as f32 / 100.0 / 300.0;
+                eprintln!("[perf] frame avg={:.1}ms max={:.1}ms | render avg={:.1}ms max={:.1}ms",
+                    avg_f, mf, avg_r, mr);
+                for (name, dur) in self.engine.gpu_pass_timings() {
+                    eprintln!("  [gpu] {}: {:.2}ms", name, dur.as_secs_f32() * 1000.0);
+                }
+            }
+        }
     }
 
     fn check_hot_reload(&mut self) {

@@ -1,8 +1,20 @@
+use std::sync::atomic::{AtomicU64, Ordering};
+static ELAPSED_SECS: AtomicU64 = AtomicU64::new(0);
+
+#[no_mangle]
+pub extern "C" fn set_elapsed(t: f32) {
+    ELAPSED_SECS.store(t.to_bits() as u64, Ordering::Relaxed);
+}
+
+fn elapsed() -> f32 {
+    f32::from_bits(ELAPSED_SECS.load(Ordering::Relaxed) as u32)
+}
+
 // --- Tweakable point-light intensity (hot-reload by saving this file) ---
 // Light color is `obj.color * obj.emissive * POINT_LIGHT_INTENSITY`.
 // Attenuation in the shader is `1/dist²`, so this number needs to be large
 // to be visible at typical scene distances of a few meters.
-const POINT_LIGHT_INTENSITY: f32 = 4.0;
+const POINT_LIGHT_INTENSITY: f32 = 6.0;
 
 // Sun illuminance at scene level (roughly: brdf-weighted irradiance on a unit Lambertian surface).
 // The sun PointLight color is premultiplied by dist² so that 1/dist² cancels out,
@@ -152,19 +164,13 @@ pub extern "C" fn scene_objects(out: &mut SceneDesc) {
         color: [0.90, 0.90, 0.90], emissive: 0.0, no_gravity: 1,
     });
 
-    // 10 floating emissive spheres (radius 0.3 m = scale 0.3), various colors.
-    // emissive=3.0 → point light intensity = POINT_LIGHT_INTENSITY * 3.0.
+    // 5 emissive spheres spread across the room — fewer lights = fewer NEE shadow rays per pixel.
     let lights: &[(u64, [f32; 3], [f32; 3])] = &[
-        (1,  [ 0.0, 2.5,  0.0], [1.0, 0.15, 0.10]), // red
-        (2,  [ 2.0, 4.0,  1.5], [1.0, 0.50, 0.05]), // orange
-        (3,  [-2.0, 3.0, -1.0], [1.0, 0.95, 0.10]), // yellow
-        (4,  [ 1.5, 5.5, -2.0], [0.10, 1.0, 0.15]), // green
-        (5,  [-1.5, 6.5,  2.0], [0.05, 0.6, 1.00]), // cyan
-        (6,  [ 3.0, 3.5, -0.5], [0.15, 0.2, 1.00]), // blue
-        (7,  [-3.0, 5.0,  1.0], [0.75, 0.1, 1.00]), // violet
-        (8,  [ 0.0, 7.0,  2.5], [1.00, 0.1, 0.60]), // magenta
-        (9,  [ 2.5, 6.0,  2.5], [0.05, 1.0, 0.65]), // teal
-        (10, [-2.5, 4.0, -2.5], [1.00, 0.9, 0.30]), // warm white
+        (1,  [ 0.0, 2.5,  0.0], [1.0, 0.15, 0.10]), // red   — center
+        (3,  [-2.0, 4.0, -2.0], [1.0, 0.95, 0.10]), // yellow — left-back
+        (5,  [ 2.0, 4.0, -2.0], [0.05, 0.6, 1.00]), // cyan   — right-back
+        (7,  [ 3.0, 7.0,  2.0], [0.75, 0.1, 1.00]), // violet — right-front upper
+        (10, [-3.0, 7.0,  2.0], [1.00, 0.9, 0.30]), // warm white — left-front upper
     ];
     // particle.glb has radius 0.08 m (256 triangles vs sphere.glb's 2304).
     // scale = 0.3 / 0.08 = 3.75 gives 0.3 m effective radius.
@@ -179,7 +185,7 @@ pub extern "C" fn scene_objects(out: &mut SceneDesc) {
     out.push(ObjectDesc {
         id: 11, model: model("sphere.glb"),
         pos: [-2.0, 1.0, 1.5], scale: 1.0,
-        color: [0.95, 0.95, 0.95], emissive: 0.0, no_gravity: 1,
+        color: [0.95, 0.95, 0.95], emissive: 2.0, no_gravity: 1,
     });
 
     // White cube on floor (scale=1.0 → 1×1×1 m, center at y=0.5).
@@ -189,18 +195,35 @@ pub extern "C" fn scene_objects(out: &mut SceneDesc) {
         color: [0.95, 0.95, 0.95], emissive: 0.0, no_gravity: 1,
     });
 
-    // Falling glowing spheres — start high, fall, squish on impact, explode.
-    // scale=0.6 → 0.6 m radius sphere.  emissive drives the point light.
+    // Floating spheres — bob up and down, 2 of 4 are emissive to keep light count low.
+    let t = elapsed();
+    let floaters: &[(u64, [f32; 3], [f32; 3], f32, f32, f32)] = &[
+        // (id, xz_pos, color, base_y, phase, emissive)
+        (20, [-1.5, 0.0, -1.0], [1.00, 0.20, 0.05], 3.2, 0.0, 2.5),
+        (21, [ 1.5, 0.0, -2.5], [0.15, 0.50, 1.00], 2.0, 1.3, 2.5),
+        (22, [ 0.0, 0.0, -3.5], [0.60, 1.00, 0.10], 4.5, 2.6, 2.5),
+        (23, [-0.5, 0.0,  0.5], [1.00, 0.80, 0.10], 2.5, 0.9, 2.5),
+    ];
+    for &(id, xz, color, base_y, phase, emissive) in floaters {
+        let y = base_y + (t * 0.6 + phase).sin() * 0.8;
+        out.push(ObjectDesc {
+            id, model: model("sphere.glb"),
+            pos: [xz[0], y, xz[2]],
+            scale: 0.5,
+            color, emissive, no_gravity: 1,
+        });
+    }
+
+    // Falling + exploding spheres — non-emissive to keep shadow ray count low.
     let fallers: &[(u64, [f32; 3], [f32; 3])] = &[
-        (20, [ 1.0, 9.0,  1.0], [1.00, 0.20, 0.05]),
-        (21, [-1.5, 9.5,  0.5], [0.15, 0.50, 1.00]),
-        (22, [ 0.5, 9.2, -1.5], [0.60, 1.00, 0.10]),
-        (23, [-1.0, 9.8, -0.5], [1.00, 0.80, 0.10]),
+        (30, [ 1.8, 9.5,  0.0], [1.00, 0.15, 0.05]),
+        (31, [-1.0, 9.0, -1.5], [0.20, 0.40, 1.00]),
+        (32, [ 0.2, 9.8,  1.0], [0.80, 1.00, 0.10]),
     ];
     for &(id, pos, color) in fallers {
         out.push(ObjectDesc {
             id, model: model("sphere.glb"),
-            pos, scale: 0.6,
+            pos, scale: 0.55,
             color, emissive: 2.5, no_gravity: 0,
         });
     }

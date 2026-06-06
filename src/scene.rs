@@ -6,16 +6,25 @@ use interact_logic::ObjectDesc;
 const GRAVITY: f32 = -9.8;
 const RESTITUTION: f32 = 0.75;
 
-const EXPLODE_SPEED: f32 = 6.0;   // impact speed (m/s) to trigger explosion
-const FRAGMENT_LIFE: f32 = 2.5;   // seconds before fragments fade out
-const FRAG_SPEED:    f32 = 3.5;   // fragment outward speed (m/s)
-const FRAG_SCALE:    f32 = 1.0;   // particle.glb scale for fragments
+const EXPLODE_SPEED: f32 = 6.0;
+const FRAGMENT_LIFE: f32 = 1.5;
+const FRAG_SPEED:    f32 = 3.5;
+const FRAG_SCALE:    f32 = 1.0;
+const FRAG_RADIUS:   f32 = FRAG_SCALE * 0.08;
+// Fixed pool size — all slots pre-allocated at startup, never added/removed.
+// Keeps TLAS instance count constant → no per-frame GPU reallocation spikes.
+const FRAG_POOL_SIZE: usize = 12;
+const HIDDEN_Y: f32 = -1000.0; // park inactive objects here
 
-struct Fragment {
-    handle:   blade_engine::ObjectHandle,
+struct FragSlot {
+    handle:  blade_engine::ObjectHandle,
+    // None = inactive (parked at HIDDEN_Y)
+    active:  Option<FragActive>,
+}
+
+struct FragActive {
     pos:      glam::Vec3,
     vel:      glam::Vec3,
-    radius:   f32,
     color:    [f32; 3],
     emissive: f32,
     life:     f32,
@@ -395,8 +404,7 @@ struct DynPhysics {
 pub struct Scene {
     pub suns: [Sun; 4],
     dynamic: HashMap<u64, DynPhysics>,
-    fragments: HashMap<u64, Fragment>,
-    next_frag_id: u64,
+    frag_pool: Vec<FragSlot>,
     models: HashMap<&'static str, ModelHandle>,
     sun_handles: [Option<blade_engine::ObjectHandle>; 4],
 }
@@ -418,18 +426,39 @@ impl Scene {
                 data_path: data_path.as_os_str().to_string_lossy().into_owned(),
                 cache_path: "asset-cache".to_string(),
                 time_step: 0.01,
-                render_backend: blade_engine::config::RenderBackend::Sdfgi,
+                render_backend: blade_engine::config::RenderBackend::RayTracer,
                 gui_enabled: cfg!(debug_assertions),
             },
         );
 
         let models = Self::register_models(&mut engine);
 
+        // Pre-allocate fragment pool — parked below the floor, never added/removed.
+        let frag_model = models["particle.glb"];
+        let park = blade_engine::Transform {
+            position: [0.0, HIDDEN_Y, 0.0].into(),
+            orientation: glam::Quat::IDENTITY.into(),
+        };
+        let frag_pool = (0..FRAG_POOL_SIZE).map(|i| {
+            let handle = engine.add_object_with_model(
+                &format!("frag_pool_{i}"),
+                frag_model,
+                blade_engine::Transform {
+                    position: [0.0, HIDDEN_Y, 0.0].into(),
+                    orientation: glam::Quat::IDENTITY.into(),
+                },
+                FRAG_SCALE,
+                blade_engine::DynamicInput::SetPosition,
+                0.08, // particle.glb geometry radius
+            );
+            engine.set_color_tint(handle, [0.0, 0.0, 0.0, 0.0]);
+            FragSlot { handle, active: None }
+        }).collect();
+
         let scene = Self {
             suns,
             dynamic: HashMap::new(),
-            fragments: HashMap::new(),
-            next_frag_id: 100_000,
+            frag_pool,
             models,
             sun_handles: [None; 4],
         };
@@ -491,6 +520,11 @@ impl Scene {
                         },
                         obj.scale,
                         blade_engine::DynamicInput::SetPosition,
+                        match model_name {
+                            "sphere.glb" => 1.0,
+                            "particle.glb" => 0.08,
+                            _ => 0.0,
+                        },
                     )
                 } else {
                     engine.add_object(
@@ -531,6 +565,9 @@ impl Scene {
                 phys.pos = declared_pos;
                 phys.vel = glam::Vec3::ZERO;
                 phys.spawn_pos = declared_pos;
+            } else if obj.no_gravity != 0 {
+                // no_gravity objects: always sync to declared pos so logic can animate them.
+                phys.pos = declared_pos;
             }
             phys.no_gravity = obj.no_gravity != 0;
 
@@ -550,44 +587,34 @@ impl Scene {
                     let impact = -phys.vel.y;
                     phys.pos.y = floor;
                     phys.vel.y = (phys.vel.y.abs() * RESTITUTION).max(0.0);
-                    if impact > EXPLODE_SPEED && self.fragments.len() < 24 {
-                        let frag_model = self.models["particle.glb"];
+                    if impact > EXPLODE_SPEED {
                         let impact_pos = phys.pos;
                         let impact_color = obj.color;
                         let impact_emissive = obj.emissive;
                         for i in 0..8u32 {
+                            // Find a free pool slot.
+                            let Some(slot) = self.frag_pool.iter_mut().find(|s| s.active.is_none()) else { break; };
                             let angle = i as f32 * std::f32::consts::TAU / 8.0;
                             let vel = glam::Vec3::new(
                                 angle.cos() * FRAG_SPEED,
                                 FRAG_SPEED * 0.8,
                                 angle.sin() * FRAG_SPEED,
                             );
-                            let fid = self.next_frag_id;
-                            self.next_frag_id += 1;
-                            let handle = engine.add_object_with_model(
-                                &format!("frag_{fid}"),
-                                frag_model,
-                                blade_engine::Transform {
-                                    position: impact_pos.into(),
-                                    orientation: glam::Quat::IDENTITY.into(),
-                                },
-                                FRAG_SCALE,
-                                blade_engine::DynamicInput::SetPosition,
-                            );
-                            self.fragments.insert(fid, Fragment {
-                                handle,
+                            engine.teleport_object(slot.handle, blade_engine::Transform {
+                                position: impact_pos.into(),
+                                orientation: glam::Quat::IDENTITY.into(),
+                            });
+                            slot.active = Some(FragActive {
                                 pos: impact_pos,
                                 vel,
-                                radius: FRAG_SCALE * 0.08,
                                 color: impact_color,
                                 emissive: impact_emissive * 0.5,
                                 life: FRAGMENT_LIFE,
                             });
                         }
-                        // Hide and schedule respawn at spawn position.
                         phys.respawn_timer = 2.5;
                         phys.vel = glam::Vec3::ZERO;
-                        phys.pos = glam::Vec3::new(0.0, -100.0, 0.0); // hide below floor
+                        phys.pos = glam::Vec3::new(0.0, HIDDEN_Y, 0.0);
                     }
                 }
             }
@@ -619,6 +646,7 @@ impl Scene {
                         transform,
                         1.0,
                         blade_engine::DynamicInput::SetPosition,
+                        150.0, // sun_sphere.glb geometry radius
                     );
                     engine.set_color_tint(handle, [sun.color.x, sun.color.y, sun.color.z, 0.4]);
                     self.sun_handles[i] = Some(handle);
@@ -670,49 +698,41 @@ impl Scene {
             });
         }
 
-        // Fragment physics update + point lights from fragments.
-        let mut dead_frags: Vec<u64> = Vec::new();
-        for (fid, frag) in &mut self.fragments {
-            frag.life -= dt;
-            if frag.life <= 0.0 {
-                dead_frags.push(*fid);
+        // Fragment pool update — no add/remove, just teleport active slots.
+        for slot in &mut self.frag_pool {
+            let Some(ref mut a) = slot.active else { continue; };
+            a.life -= dt;
+            if a.life <= 0.0 {
+                slot.active = None;
+                engine.teleport_object(slot.handle, blade_engine::Transform {
+                    position: [0.0, HIDDEN_Y, 0.0].into(),
+                    orientation: glam::Quat::IDENTITY.into(),
+                });
+                engine.set_color_tint(slot.handle, [0.0, 0.0, 0.0, 0.0]);
                 continue;
             }
-            frag.vel.y += GRAVITY * dt;
-            frag.pos += frag.vel * dt;
-            let floor = frag.radius;
-            if frag.pos.y < floor {
-                frag.pos.y = floor;
-                frag.vel.y = (frag.vel.y.abs() * RESTITUTION * 0.6).max(0.0);
-                frag.vel.x *= 0.7;
-                frag.vel.z *= 0.7;
+            a.vel.y += GRAVITY * dt;
+            a.pos += a.vel * dt;
+            if a.pos.y < FRAG_RADIUS {
+                a.pos.y = FRAG_RADIUS;
+                a.vel.y = (a.vel.y.abs() * RESTITUTION * 0.6).max(0.0);
+                a.vel.x *= 0.7;
+                a.vel.z *= 0.7;
             }
-            engine.teleport_object(frag.handle, blade_engine::Transform {
-                position: frag.pos.into(),
+            engine.teleport_object(slot.handle, blade_engine::Transform {
+                position: a.pos.into(),
                 orientation: glam::Quat::IDENTITY.into(),
             });
-            let fade = (frag.life / FRAGMENT_LIFE).min(1.0);
-            engine.set_color_tint(frag.handle, [
-                frag.color[0], frag.color[1], frag.color[2],
-                frag.emissive * fade,
-            ]);
-            if frag.emissive > 0.0 {
-                let intensity = intensity_scale * frag.emissive * fade;
+            let fade = (a.life / FRAGMENT_LIFE).min(1.0);
+            engine.set_color_tint(slot.handle, [a.color[0], a.color[1], a.color[2], a.emissive * fade]);
+            if a.emissive > 0.0 {
+                let intensity = intensity_scale * a.emissive * fade;
                 point_lights.push(blade_render::PointLight {
-                    pos: frag.pos.into(),
-                    radius: frag.radius,
-                    color: [
-                        frag.color[0] * intensity,
-                        frag.color[1] * intensity,
-                        frag.color[2] * intensity,
-                    ],
+                    pos: a.pos.into(),
+                    radius: FRAG_RADIUS,
+                    color: [a.color[0] * intensity, a.color[1] * intensity, a.color[2] * intensity],
                     _pad: 0.0,
                 });
-            }
-        }
-        for fid in dead_frags {
-            if let Some(frag) = self.fragments.remove(&fid) {
-                engine.remove_object(frag.handle);
             }
         }
 
@@ -744,14 +764,15 @@ impl Scene {
                 })
             })
             .collect();
-        // Fragment spheres also contribute to the SDF.
-        for frag in self.fragments.values() {
-            let r = frag.radius;
-            sdf_objects.push(blade_render::SdfObject {
-                pos:     [frag.pos.x, frag.pos.y, frag.pos.z, 0.0],
-                scale:   [r, r, r],
-                type_id: blade_render::SDF_TYPE_SPHERE,
-            });
+        // Active fragment slots also contribute to the SDF.
+        for slot in &self.frag_pool {
+            if let Some(ref a) = slot.active {
+                sdf_objects.push(blade_render::SdfObject {
+                    pos:     [a.pos.x, a.pos.y, a.pos.z, 0.0],
+                    scale:   [FRAG_RADIUS, FRAG_RADIUS, FRAG_RADIUS],
+                    type_id: blade_render::SDF_TYPE_SPHERE,
+                });
+            }
         }
         engine.set_sdf_objects(&sdf_objects);
     }

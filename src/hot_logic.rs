@@ -8,6 +8,7 @@ type SceneObjectsFn  = unsafe extern "C" fn(&mut SceneDesc);
 type MakeSunsFn      = unsafe extern "C" fn(&mut [Sun; 4]);
 type PointLightIntensityFn = unsafe extern "C" fn() -> f32;
 type SunIlluminanceFn      = unsafe extern "C" fn() -> f32;
+type SetElapsedFn          = unsafe extern "C" fn(f32);
 
 struct Loaded {
     _lib: libloading::Library,
@@ -17,6 +18,7 @@ struct Loaded {
     make_suns: MakeSunsFn,
     point_light_intensity: PointLightIntensityFn,
     sun_illuminance: SunIlluminanceFn,
+    set_elapsed: SetElapsedFn,
     mtime: SystemTime,
     counter: u64,
 }
@@ -73,10 +75,11 @@ pub fn try_reload() {
         let make_suns       = sym!(b"make_suns",        MakeSunsFn);
         let point_light_intensity = sym!(b"point_light_intensity", PointLightIntensityFn);
         let sun_illuminance = sym!(b"sun_illuminance", SunIlluminanceFn);
+        let set_elapsed = sym!(b"set_elapsed", SetElapsedFn);
 
         let mut g = LOADED.lock().unwrap();
         let prev_counter = g.as_ref().map(|l| l.counter);
-        *g = Some(Loaded { _lib: lib, step_suns, make_env_pixels, scene_objects, make_suns, point_light_intensity, sun_illuminance, mtime, counter });
+        *g = Some(Loaded { _lib: lib, step_suns, make_env_pixels, scene_objects, make_suns, point_light_intensity, sun_illuminance, set_elapsed, mtime, counter });
         RELOADED.store(true, std::sync::atomic::Ordering::Relaxed);
         eprintln!("[hot_logic] reloaded interact_logic (counter={counter})");
 
@@ -136,4 +139,10 @@ pub fn sun_illuminance() -> f32 {
     let g = LOADED.lock().unwrap();
     if let Some(l) = g.as_ref() { unsafe { (l.sun_illuminance)() } }
     else { interact_logic::sun_illuminance() }
+}
+
+pub fn set_elapsed(t: f32) {
+    let g = LOADED.lock().unwrap();
+    if let Some(l) = g.as_ref() { unsafe { (l.set_elapsed)(t) }; }
+    else { interact_logic::set_elapsed(t); }
 }
